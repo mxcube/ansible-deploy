@@ -1,0 +1,8 @@
+%YAML 1.2
+---
+# BLISS Proxy - Generic access to all BLISS devices via the blissclient REST API
+
+class: mxcubecore.HardwareObjects.BlissProxy.BlissProxy
+
+configuration:
+  blissapi_url: http://localhost:5000

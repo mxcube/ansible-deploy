@@ -1,0 +1,125 @@
+---
+# Global variables for MXCubeWeb deployment
+
+# User that runs the services on the target VM
+service_user: "{{ lookup('env', 'USER') }}"
+service_group: ""
+
+install_base_path: "/opt/mxcube"
+log_base_path: "/var/log/mxcube"
+
+# Subdirectory inside mxcubeweb that holds the hardware YAML configs
+mxcube_config_dir: "demo.yaml"
+
+# Python version used by the mxcubeweb conda environment
+mxcube_python_version: "3.11"
+
+# Log level passed to mxcubeweb-server (-L flag)
+mxcube_log_level: "info"
+
+# Subdirectory inside mxcubeweb that holds the docker-compose file
+docker_compose_project_dir: "ansible"
+
+mxcubeweb_config:
+  port: 8081
+  host: "0.0.0.0"
+  debug: false
+
+  secret_key: "{{ vault_mxcube_secret_key }}"
+  security_password_salt: "{{ vault_mxcube_security_password_salt }}"
+
+  user_db_path: "/tmp/mxcube-user.db"
+  permanent_session_lifetime: 60
+
+  cert: "NONE"
+  cert_pem: ""
+  cert_key: ""
+  local_cert_pem: ""
+  local_cert_key: ""
+
+  external_url: "https://your-mxcube-host.example.com"
+  allowed_cors_origins:
+    - "https://your-mxcube-host.example.com"
+
+# Users allowed to log in — role is either "user" or "staff"
+# mxcubeweb_users:
+#   - username: "localuser"
+#     role: "staff"
+mxcubeweb_users: []
+
+mxcubeweb_sso:
+  use_sso: false
+  issuer: ""
+  logout_uri: ""
+  token_info_uri: ""
+  meta_data_uri: ""
+  client_id: "mxcube"
+  client_secret: "{{ vault_mxcube_sso_client_secret }}"
+  scope: "openid email profile"
+  code_challenge_method: "S256"
+
+# Video stream configuration
+mxcubeweb_video:
+  use_external_streamer: false
+  format: "MPEG1"
+  stream_url: ""
+  stream_port: 8000
+  mxcube_starts_stream: false
+
+# Argus integration (optional live view proxy)
+mxcubeweb_argus:
+  enabled: false
+  stream_proxy_url: "ws://localhost:7000/ws"
+
+# Braggy integration (optional diffraction viewer)
+mxcubeweb_braggy:
+  enabled: false
+  url: ""
+
+conda_environments:
+  mxcube:
+    conda_packages:
+      - nodejs==22.*
+      - pnpm==10.*
+      - poetry==2.1.3
+      - openldap
+      - ffmpeg
+    pip_packages:
+      - gunicorn
+      - gevent
+      - blissclient
+      - marshmallow
+      - aiohttp
+      - pyicat_plus
+
+# Set use_local_repos to true to sync from local paths instead of cloning from GitHub
+use_local_repos: true
+
+local_mxcubecore_path: "../../../mxcubecore"
+local_mxcubeweb_path: "../../../"
+local_bliss_path: "../../../bliss"
+
+# GitHub repositories (used when use_local_repos is false)
+mxcubecore_repo: "https://github.com/mxcube/mxcubecore.git"
+mxcubecore_version: "develop"
+
+mxcubeweb_repo: "https://github.com/mxcube/mxcubeweb.git"
+mxcubeweb_version: "develop"
+
+use_bliss: true
+bliss_repo: "https://gitlab.esrf.fr/bliss/bliss.git"
+bliss_version: "master"
+bliss_rest_port: 5000
+bliss_beacon_port: 10001
+bliss_tango_port: 10000
+
+# Commands run by the BLISS systemd services
+bliss_server_command: "python -m blissdemo.apps.demo_servers --no-detectors"
+bliss_session_command: "bliss-demo-session --server"
+
+# Set to true to deploy and start Docker containers
+use_docker: true
+
+# Docker image tarball URLs
+arinax_docker_image_url: "https://cloud.esrf.fr/public.php/dav/files/7qtFP5iP9jiPB2M"
+flex_docker_image_url: "https://cloud.esrf.fr/public.php/dav/files/iAdyarEZmL9odxJ"

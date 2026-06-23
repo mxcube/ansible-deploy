@@ -1,0 +1,30 @@
+%YAML 1.2
+---
+class: Microdiff.Microdiff
+configuration:
+  chi: 0
+  chip_definition_file: chip_definition.json
+  exporter_address: localhost:9002
+  num_centering_rounds: 5
+  username: MD
+properties:
+  - name: centringReferencePosition
+    value:
+      phiz: -0.016
+      phiy: -0.05
+objects:
+  phi: udiff_omega.yaml
+  phiz: udiff_phiz.yaml
+  phiy: udiff_phiy.yaml
+  zoom: udiff_zoom.yaml
+  frontlight: udiff_frontlight.yaml
+  backlight: udiff_backlight.yaml
+  frontlightswitch: udiff_frontlightswitch.yaml
+  backlightswitch: udiff_backlightswitch.yaml
+  focus: udiff_phix.yaml
+  sampx: udiff_sampx.yaml
+  sampy: udiff_sampy.yaml
+  kappa: udiff_kappa.yaml
+  kappa_phi: udiff_kappaphi.yaml
+  beamstop: beamstop.yaml
+  capillary: capillary.yaml

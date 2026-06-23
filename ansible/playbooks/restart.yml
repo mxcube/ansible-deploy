@@ -1,0 +1,101 @@
+---
+# Playbook to restart MXCubeWeb (and optionally BLISS) services
+
+- name: Restart services
+  hosts: mxcube_vms
+  become: true
+
+  tasks:
+    - name: Stop MXCubeWeb
+      ansible.builtin.systemd:
+        name: "mxcubeweb-{{ vm_context }}"
+        state: stopped
+      ignore_errors: true
+
+    - name: Stop BLISS session
+      ansible.builtin.systemd:
+        name: "bliss-session-{{ vm_context }}"
+        state: stopped
+      ignore_errors: true
+      when: use_bliss | default(false)
+
+    - name: Stop BLISS server
+      ansible.builtin.systemd:
+        name: "bliss-server-{{ vm_context }}"
+        state: stopped
+      ignore_errors: true
+      when: use_bliss | default(false)
+
+    - name: Wait for services to stop
+      ansible.builtin.wait_for:
+        timeout: 5
+
+    - name: Kill stale BLISS shell sessions
+      ansible.builtin.shell: pkill -f "bliss.shell.main" || true
+      ignore_errors: true
+      when: use_bliss | default(false)
+
+    - name: Kill any remaining process holding BLISS REST port
+      ansible.builtin.shell: fuser -k {{ bliss_rest_port }}/tcp || true
+      ignore_errors: true
+      when: use_bliss | default(false)
+
+    - name: Wait for BLISS REST port to be released
+      ansible.builtin.wait_for:
+        host: localhost
+        port: "{{ bliss_rest_port }}"
+        state: absent
+        timeout: 15
+      ignore_errors: true
+      when: use_bliss | default(false)
+
+    - name: Start BLISS server
+      ansible.builtin.systemd:
+        name: "bliss-server-{{ vm_context }}"
+        state: started
+        daemon_reload: true
+      when: use_bliss | default(false)
+
+    - name: Wait for BLISS server to be ready (10s)
+      ansible.builtin.wait_for:
+        timeout: 10
+      when: use_bliss | default(false)
+
+    - name: Start BLISS session
+      ansible.builtin.systemd:
+        name: "bliss-session-{{ vm_context }}"
+        state: started
+        daemon_reload: true
+      when: use_bliss | default(false)
+
+    - name: Wait for BLISS REST API on port {{ bliss_rest_port }}
+      ansible.builtin.wait_for:
+        host: localhost
+        port: "{{ bliss_rest_port }}"
+        timeout: 60
+      when: use_bliss | default(false)
+
+    - name: Start MXCubeWeb
+      ansible.builtin.systemd:
+        name: "mxcubeweb-{{ vm_context }}"
+        state: started
+        daemon_reload: true
+
+    - name: Wait for MXCubeWeb on port {{ mxcubeweb_config.port }}
+      ansible.builtin.wait_for:
+        host: localhost
+        port: "{{ mxcubeweb_config.port }}"
+        timeout: 120
+
+    - name: Get MXCubeWeb service status
+      ansible.builtin.systemd:
+        name: "mxcubeweb-{{ vm_context }}"
+      register: mxcubeweb_status
+
+    - name: Show service status
+      ansible.builtin.debug:
+        msg: "mxcubeweb-{{ vm_context }}: {{ mxcubeweb_status.status.ActiveState }}"
+
+    - name: Show log command
+      ansible.builtin.debug:
+        msg: "journalctl -u mxcubeweb-{{ vm_context }} -f"

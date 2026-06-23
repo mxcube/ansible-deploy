@@ -1,0 +1,7 @@
+%YAML 1.2
+---
+class: BlissShutter.BlissShutter
+configuration:
+  actuator_name: beam_shutter
+  type: tango
+  username: Safety shutter

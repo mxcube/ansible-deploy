@@ -1,0 +1,30 @@
+[Unit]
+Description=Bliss Demo Session ({{ vm_context }})
+After=network.target bliss-server-{{ vm_context }}.service
+Wants=bliss-server-{{ vm_context }}.service
+
+[Service]
+Type=simple
+User={{ service_user }}
+{% if service_group %}
+Group={{ service_group }}
+{% endif %}
+WorkingDirectory={{ install_base_path }}/bliss
+
+# Starts the BLISS session and REST API headlessly (no terminal).
+ExecStart=/bin/bash -c 'source {{ install_base_path }}/miniconda/bin/activate bliss_dev && {{ bliss_session_command }}'
+
+# Give demo servers time to start
+ExecStartPre=/bin/sleep 10
+
+# Restart policy
+Restart=on-failure
+RestartSec=15
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bliss-session-{{ vm_context }}
+
+[Install]
+WantedBy=multi-user.target

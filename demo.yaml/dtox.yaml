@@ -1,0 +1,8 @@
+%YAML 1.2
+---
+class: BlissMotor.BlissMotor
+configuration:
+  actuator_name: robx
+  username: Detector distance
+  low_limit: 100.0
+  high_limit: 1000.0

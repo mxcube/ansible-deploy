@@ -1,0 +1,10 @@
+---
+# SECRETS TEMPLATE — copy to vault.yml, fill in values, then encrypt:
+#   ansible-vault encrypt ansible/playbooks/group_vars/all/vault.yml
+
+# MXCubeWeb Flask
+vault_mxcube_secret_key: "CHANGEME"
+vault_mxcube_security_password_salt: "CHANGEME"
+
+# SSO client secret (leave empty if use_sso: false)
+vault_mxcube_sso_client_secret: ""

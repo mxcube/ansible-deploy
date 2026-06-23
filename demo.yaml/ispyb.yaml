@@ -1,0 +1,9 @@
+%YAML 1.2
+---
+class: MockupProposalTypeISPyBLims.MockupProposalTypeISPyBLims
+configuration:
+  ws_root: https://ispyb.esrf.fr/ispyb/ispyb-ws/ispybWS/
+  ws_username: ispybws1
+  ws_password: "I$pybws1"
+  authServerType: ldap
+  loginType: user

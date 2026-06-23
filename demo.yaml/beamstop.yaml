@@ -1,0 +1,8 @@
+%YAML 1.2
+---
+class: BlissNState.BlissNState
+configuration:
+  actuator_name: beamstop
+  type: actuator
+  username: Beamstop
+  values: '{"IN": "BEAM", "OUT": "OFF", "PARK": "PARK", "TRANSFER": "TRANSFER"}'

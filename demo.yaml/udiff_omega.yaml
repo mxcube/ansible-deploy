@@ -1,0 +1,8 @@
+%YAML 1.2
+---
+class: ExporterMotor.ExporterMotor
+configuration:
+  actuator_name: Omega
+  exporter_address: localhost:9002
+  tolerance: 0.001
+  username: Omega

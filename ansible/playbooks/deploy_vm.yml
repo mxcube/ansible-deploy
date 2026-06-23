@@ -1,0 +1,539 @@
+---
+# Main playbook to deploy MXCubeWeb on one or more VMs
+
+- name: Deploy mxcubeweb on VMs
+  hosts: mxcube_vms
+  become: true
+
+  tasks:
+    - name: Install system dependencies
+      ansible.builtin.package:
+        name:
+          - git
+          - wget
+          - curl
+          - build-essential
+          - python3
+          - python3-pip
+          - graphviz
+          - redis-server
+          - tmux
+        state: present
+      when: ansible_os_family == "Debian"
+      tags: [system, dependencies]
+
+    # Create the base installation directory for this VM
+    - name: Create installation directory
+      ansible.builtin.file:
+        path: "{{ install_base_path }}"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0755'
+      tags: [setup, directories]
+
+    - name: Create log directory
+      ansible.builtin.file:
+        path: "{{ log_base_path }}"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0750'
+      tags: [setup, directories, logging]
+
+    # Miniconda setup
+    - name: Check if Miniconda is installed
+      ansible.builtin.stat:
+        path: "{{ install_base_path }}/miniconda/bin/conda"
+      register: conda_installed
+      tags: [conda, setup]
+
+    - name: Download Miniconda
+      ansible.builtin.get_url:
+        url: "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
+        dest: "/tmp/miniconda.sh"
+        mode: '0755'
+      when: not conda_installed.stat.exists
+      tags: [conda, setup]
+
+    - name: Install Miniconda
+      ansible.builtin.command:
+        cmd: "bash /tmp/miniconda.sh -b -p {{ install_base_path }}/miniconda"
+      when: not conda_installed.stat.exists
+      changed_when: true
+      tags: [conda, setup]
+
+    - name: Set ownership of miniconda directory
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/miniconda"
+        owner: "{{ service_user }}"
+        recurse: true
+      when: not conda_installed.stat.exists
+      tags: [conda, setup]
+
+    - name: Initialize conda for bash
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda init bash"
+      become_user: "{{ service_user }}"
+      when: not conda_installed.stat.exists
+      changed_when: true
+      tags: [conda, setup]
+
+    - name: Check if mamba is installed
+      ansible.builtin.stat:
+        path: "{{ install_base_path }}/miniconda/bin/mamba"
+      register: mamba_installed
+      tags: [conda, mamba, setup]
+
+    - name: Accept Anaconda Terms of Service
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda tos accept --override-channels --channel {{ item }}"
+      loop:
+        - "https://repo.anaconda.com/pkgs/main"
+        - "https://repo.anaconda.com/pkgs/r"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      tags: [conda, mamba, setup]
+
+    - name: Install mamba in base environment
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda install mamba -n base -c conda-forge -y"
+      environment:
+        CONDA_SOLVER: classic
+      become_user: "{{ service_user }}"
+      become: false
+      when: not mamba_installed.stat.exists
+      changed_when: true
+      async: 3600
+      poll: 30
+      tags: [conda, mamba, bliss]
+
+    # Copy or clone repositories depending on use_local_repos flag
+    - name: Copy local mxcubecore repository
+      ansible.posix.synchronize:
+        src: "{{ local_mxcubecore_path }}/"
+        dest: "{{ install_base_path }}/mxcubecore"
+        delete: false
+        recursive: true
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+      become_user: "{{ service_user }}"
+      when: use_local_repos
+      tags: [repositories, mxcubecore, local, update]
+
+    - name: Copy local mxcubeweb repository
+      ansible.posix.synchronize:
+        src: "{{ local_mxcubeweb_path }}/"
+        dest: "{{ install_base_path }}/mxcubeweb"
+        delete: false
+        recursive: true
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+          - "--exclude=node_modules"
+          - "--exclude=ui/build"
+      become_user: "{{ service_user }}"
+      when: use_local_repos
+      tags: [repositories, mxcubeweb, local, update]
+
+    - name: Copy local bliss repository
+      ansible.posix.synchronize:
+        src: "{{ local_bliss_path }}/"
+        dest: "{{ install_base_path }}/bliss"
+        delete: false
+        recursive: true
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+      become_user: "{{ service_user }}"
+      when: use_local_repos and (use_bliss | default(false))
+      tags: [repositories, bliss, local, update]
+
+    - name: Clone mxcubecore from GitHub
+      ansible.builtin.git:
+        repo: "{{ mxcubecore_repo }}"
+        dest: "{{ install_base_path }}/mxcubecore"
+        version: "{{ mxcubecore_version }}"
+        force: true
+      become_user: "{{ service_user }}"
+      when: not use_local_repos
+      tags: [git, repositories, mxcubecore, update]
+
+    - name: Clone mxcubeweb from GitHub
+      ansible.builtin.git:
+        repo: "{{ mxcubeweb_repo }}"
+        dest: "{{ install_base_path }}/mxcubeweb"
+        version: "{{ mxcubeweb_version }}"
+        force: true
+      become_user: "{{ service_user }}"
+      when: not use_local_repos
+      tags: [git, repositories, mxcubeweb, update]
+
+    - name: Clone bliss from GitLab
+      ansible.builtin.git:
+        repo: "{{ bliss_repo }}"
+        dest: "{{ install_base_path }}/bliss"
+        version: "{{ bliss_version }}"
+        force: true
+      become_user: "{{ service_user }}"
+      when: not use_local_repos and (use_bliss | default(false))
+      tags: [git, repositories, bliss, update]
+
+    # Server configuration (server.yaml) — deployed after repo sync/clone so it
+    # overwrites the default file that comes with the repository.
+    - name: Ensure mxcube-web config directory exists
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/mxcubeweb/{{ mxcube_config_dir }}/mxcube-web"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0755'
+      tags: [config, sso, ssl]
+
+    - name: Deploy mxcubeweb server config (server.yaml)
+      ansible.builtin.template:
+        src: templates/server.yaml.j2
+        dest: "{{ install_base_path }}/mxcubeweb/{{ mxcube_config_dir }}/mxcube-web/server.yaml"
+        owner: "{{ service_user }}"
+        mode: '0600'
+      tags: [config, sso, ssl]
+
+    - name: Create SSL certificate directory
+      ansible.builtin.file:
+        path: "{{ mxcubeweb_config.cert_pem | dirname }}"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0750'
+      when: mxcubeweb_config.cert == "SIGNED" and mxcubeweb_config.cert_pem | length > 0
+      tags: [config, ssl]
+
+    - name: Copy SSL certificate from controller
+      ansible.builtin.copy:
+        src: "{{ mxcubeweb_config.local_cert_pem }}"
+        dest: "{{ mxcubeweb_config.cert_pem }}"
+        owner: "{{ service_user }}"
+        mode: '0640'
+      when: mxcubeweb_config.local_cert_pem | length > 0
+      tags: [config, ssl]
+
+    - name: Copy SSL private key from controller
+      ansible.builtin.copy:
+        src: "{{ mxcubeweb_config.local_cert_key }}"
+        dest: "{{ mxcubeweb_config.cert_key }}"
+        owner: "{{ service_user }}"
+        mode: '0600'
+      when: mxcubeweb_config.local_cert_key | length > 0
+      tags: [config, ssl]
+
+    - name: Check if mxcubeweb conda env exists
+      ansible.builtin.stat:
+        path: "{{ install_base_path }}/miniconda/envs/mxcubeweb"
+      register: mxcubeweb_env
+      tags: [conda, environment]
+
+    - name: Clean mamba cache before mxcubeweb env creation
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/mamba clean -a -y"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      when: not mxcubeweb_env.stat.exists
+      tags: [conda, environment]
+
+    - name: Create mxcubeweb conda environment from conda-environment.yml
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/mamba env create --file {{ install_base_path }}/mxcubeweb/conda-environment.yml"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: true
+      when: not mxcubeweb_env.stat.exists
+      async: 1800
+      poll: 30
+      tags: [conda, environment]
+
+    - name: Update mxcubeweb conda environment from conda-environment.yml
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/mamba env update -n mxcubeweb --file {{ install_base_path }}/mxcubeweb/conda-environment.yml --prune"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: true
+      when: mxcubeweb_env.stat.exists and not (skip_env_update | default(false) | bool)
+      async: 1800
+      poll: 30
+      tags: [conda, environment, update, env_update]
+
+    - name: Check if bliss_dev conda env exists
+      ansible.builtin.stat:
+        path: "{{ install_base_path }}/miniconda/envs/bliss_dev"
+      register: bliss_dev_env
+      when: use_bliss | default(false)
+      tags: [conda, environment, bliss]
+
+    - name: Clean mamba cache before BLISS env creation
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/mamba clean -a -y"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      when: (use_bliss | default(false)) and not bliss_dev_env.stat.exists
+      tags: [conda, environment, bliss, cache]
+
+    - name: Create bliss conda environment using Makefile
+      ansible.builtin.shell:
+        cmd: |
+          source {{ install_base_path }}/miniconda/etc/profile.d/conda.sh
+          conda activate base
+          make bl_env NAME=bliss_dev
+      args:
+        chdir: "{{ install_base_path }}/bliss"
+        executable: /bin/bash
+      environment:
+        TMPDIR: /tmp
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: true
+      when: (use_bliss | default(false)) and not bliss_dev_env.stat.exists
+      async: 1800
+      poll: 60
+      tags: [conda, environment, bliss]
+
+    - name: Install blissdemo in development mode
+      ansible.builtin.shell:
+        cmd: |
+          source {{ install_base_path }}/miniconda/etc/profile.d/conda.sh
+          conda activate bliss_dev
+          pip install -e ./blissdemo
+      args:
+        chdir: "{{ install_base_path }}/bliss"
+        executable: /bin/bash
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      when: use_bliss | default(false)
+      tags: [conda, environment, bliss, update]
+
+    - name: Fix ownership of mxcubeweb conda env (ensure service_user can write site-packages)
+      ansible.builtin.shell:
+        cmd: "chown -R {{ service_user }} {{ install_base_path }}/miniconda/envs/mxcubeweb"
+      changed_when: false
+      tags: [python, dependencies, mxcubeweb, update]
+
+    - name: Remove stale virtualenv xonsh activation scripts
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/miniconda/envs/mxcubeweb/lib/python{{ mxcube_python_version }}/site-packages/virtualenv/activation/xonsh"
+        state: absent
+      tags: [python, dependencies, mxcubeweb, update]
+
+
+    - name: Fix attrs in mxcubeweb env (required by pip/poetry)
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pip install --force-reinstall 'attrs>=22.1.0'"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      tags: [python, dependencies, mxcubeweb, update]
+
+    - name: Install Mxcubeweb dependencies with Poetry
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb poetry install"
+      args:
+        chdir: "{{ install_base_path }}/mxcubeweb"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      tags: [python, dependencies, mxcubeweb, update]
+
+    - name: Install mxcubecore in editable mode (no-deps)
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pip install -e . --no-deps"
+      args:
+        chdir: "{{ install_base_path }}/mxcubecore"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      tags: [python, dependencies, mxcubecore, update]
+
+    - name: Install extra pip packages in mxcubeweb env
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pip install {{ conda_environments.mxcube.pip_packages | join(' ') }}"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      tags: [python, dependencies, mxcubeweb, update]
+
+    # Frontend build
+    - name: Install UI dependencies
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pnpm --prefix ui install"
+      args:
+        chdir: "{{ install_base_path }}/mxcubeweb"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      async: 1800
+      poll: 30
+      tags: [ui, dependencies, frontend, update]
+
+    - name: Build UI
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pnpm --prefix ui build"
+      args:
+        chdir: "{{ install_base_path }}/mxcubeweb"
+      become_user: "{{ service_user }}"
+      become: false
+      async: 1800
+      poll: 30
+      tags: [ui, build, frontend, update]
+
+    # Docker containers management
+
+    - name: Create directory for Docker images
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/docker-images"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0755'
+      when: use_docker | default(false)
+      tags: [docker, setup]
+
+    - name: Download arinax Docker image
+      ansible.builtin.get_url:
+        url: "{{ arinax_docker_image_url }}"
+        dest: "{{ install_base_path }}/docker-images/arinax.tar"
+        mode: '0644'
+        force: false
+      become_user: "{{ service_user }}"
+      when: arinax_docker_image_url | default('') | length > 0
+      tags: [docker, images]
+
+    - name: Download flex Docker image
+      ansible.builtin.get_url:
+        url: "{{ flex_docker_image_url }}"
+        dest: "{{ install_base_path }}/docker-images/flex.tar"
+        mode: '0644'
+        force: false
+      become_user: "{{ service_user }}"
+      when: flex_docker_image_url | default('') | length > 0
+      tags: [docker, images]
+
+    - name: Load arinax Docker image
+      ansible.builtin.command:
+        cmd: docker load -i "{{ install_base_path }}/docker-images/arinax.tar"
+      when: arinax_docker_image_url | default('') | length > 0
+      changed_when: true
+      tags: [docker, images]
+
+    - name: Load flex Docker image
+      ansible.builtin.command:
+        cmd: docker load -i "{{ install_base_path }}/docker-images/flex.tar"
+      when: flex_docker_image_url | default('') | length > 0
+      changed_when: true
+      tags: [docker, images]
+
+    - name: Add service_user to docker group
+      ansible.builtin.user:
+        name: "{{ service_user }}"
+        groups: docker
+        append: true
+      when: use_docker | default(false)
+      tags: [docker, setup]
+
+    - name: Start Docker containers with docker-compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ install_base_path }}/mxcubeweb/{{ docker_compose_project_dir }}"
+        state: present
+      become: true
+      when: use_docker | default(false)
+      tags: [docker]
+
+    # Systemd service
+    - name: Create systemd service file
+      ansible.builtin.template:
+        src: templates/mxcubeweb.service.j2
+        dest: "/etc/systemd/system/mxcubeweb-{{ vm_context }}.service"
+        mode: '0644'
+      notify: Reload systemd
+      tags: [service, systemd]
+
+    - name: Kill stale BLISS shell sessions
+      ansible.builtin.shell: pkill -TERM -f 'bliss.shell.main' 2>/dev/null; true
+      changed_when: false
+      failed_when: false
+      when: use_bliss | default(false)
+      tags: [service, systemd, bliss]
+
+    - name: Kill any remaining process holding BLISS REST port
+      ansible.builtin.shell: fuser -k {{ bliss_rest_port }}/tcp 2>/dev/null; true
+      changed_when: false
+      ignore_errors: true
+      when: use_bliss | default(false)
+      tags: [service, systemd, bliss]
+
+    - name: Enable and start MXCubeWeb service
+      ansible.builtin.systemd:
+        name: "mxcubeweb-{{ vm_context }}"
+        enabled: true
+        state: started
+        daemon_reload: true
+      tags: [service, systemd]
+
+    # Bliss services
+    - name: Create bliss server systemd service
+      ansible.builtin.template:
+        src: templates/bliss-server.service.j2
+        dest: "/etc/systemd/system/bliss-server-{{ vm_context }}.service"
+        mode: '0644'
+      notify: Reload systemd
+      when: use_bliss | default(false)
+      tags: [service, systemd, bliss]
+
+    - name: Create bliss session systemd service
+      ansible.builtin.template:
+        src: templates/bliss-session.service.j2
+        dest: "/etc/systemd/system/bliss-session-{{ vm_context }}.service"
+        mode: '0644'
+      notify: Reload systemd
+      when: use_bliss | default(false)
+      tags: [service, systemd, bliss]
+
+    - name: Enable and restart Bliss server service
+      ansible.builtin.systemd:
+        name: "bliss-server-{{ vm_context }}"
+        enabled: true
+        state: restarted
+        daemon_reload: true
+      when: use_bliss | default(false)
+      tags: [service, systemd, bliss]
+
+    - name: Enable and restart Bliss session service
+      ansible.builtin.systemd:
+        name: "bliss-session-{{ vm_context }}"
+        enabled: true
+        state: restarted
+        daemon_reload: true
+      when: use_bliss | default(false)
+      tags: [service, systemd, bliss]
+
+    - name: Display deployment information
+      ansible.builtin.debug:
+        msg: >-
+          Deployment complete for {{ vm_context }}.
+          Service: mxcubeweb-{{ vm_context }}.
+          Logs: journalctl -u mxcubeweb-{{ vm_context }} -f
+      tags: [always]
+
+    - name: Display BLISS service information
+      ansible.builtin.debug:
+        msg: >-
+          BLISS server: bliss-server-{{ vm_context }}.
+          BLISS session: bliss-session-{{ vm_context }}.
+          BLISS REST API: http://{{ ansible_hostname }}:5000/api
+      when: use_bliss | default(false)
+      tags: [always]
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

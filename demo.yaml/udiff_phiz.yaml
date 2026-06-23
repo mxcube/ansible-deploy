@@ -1,0 +1,8 @@
+%YAML 1.2
+---
+class: ExporterMotor.ExporterMotor
+configuration:
+  exporter_address: localhost:9002
+  actuator_name: AlignmentZ
+  unit: 1e-05
+  username: PhiZ
