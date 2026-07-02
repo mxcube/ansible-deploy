@@ -12,32 +12,6 @@ This repository contains everything needed to run and deploy MXCubeWeb:
 
 ## Quick overview
 
-### Development — Docker container
-
-A self-contained Docker image with a Mate desktop, VNC server, conda environment,
-Redis and the React frontend. Intended for local development without a real beamline.
-
-```bash
-cd docker
-docker build -t mxcubeweb-dev .
-docker run -p 5901:5901 -p 8090:8090 -p 8081:8081 -dt mxcubeweb-dev
-```
-
-Connect via VNC to `<container-ip>:1` (password: `mxcube`), then open `localhost:8090`.
-Test credentials: `idtest0` / `000`.
-
-See [`docker/README.md`](docker/README.md) for the full Docker workflow.
-
-The hardware simulators used alongside the container are managed with the
-`docker/docker-compose.yml`:
-
-```bash
-cd docker
-docker compose up -d   # starts flex-server (sample changer) and arinax:MD (minidiff)
-```
-
----
-
 ### Production — Ansible deployment to a VM
 
 Deploys MXCubeWeb as a systemd service on one or more target VMs.
@@ -48,6 +22,8 @@ and the Docker hardware simulators.
 
 - Ansible installed locally (`./ansible/scripts/install_ansible.sh`)
 - SSH access to the target VM(s)
+- Docker and the Compose plugin already installed on each target VM
+  (the playbook manages containers via `docker-compose` but does not install Docker itself)
 - Docker images loaded on each VM (see [Loading Docker images](#7-load-docker-images-on-the-vm-first-time))
 
 #### 1. Configure the inventory
