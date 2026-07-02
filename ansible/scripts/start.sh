@@ -20,6 +20,7 @@ done
 # Configuration
 VM_HOST=$(grep "ansible_host:" "${PROJECT_ROOT}/inventory.yaml" | head -1 | awk '{print $2}')
 VM_CONTEXT=$(grep "vm_context:" "${PROJECT_ROOT}/inventory.yaml" | head -1 | awk -F'"' '{print $2}')
+USE_BLISS=$(grep -E "^use_bliss:" "${PROJECT_ROOT}/playbooks/group_vars/all/vars.yml" | awk '{print $2}')
 REMOTE_PORT=8081
 LOCAL_PORT=8081
 BLISS_REMOTE_PORT=5000
@@ -54,22 +55,24 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo ""
 fi
 
-echo "Waiting for BLISS REST API to be ready on ${VM_HOST}:${BLISS_REMOTE_PORT}..."
-MAX_WAIT=120
-WAITED=0
-while [ $WAITED -lt $MAX_WAIT ]; do
-    if ssh ${VM_HOST} "curl -sf http://localhost:${BLISS_REMOTE_PORT}/api/info > /dev/null 2>&1"; then
-        echo "BLISS REST API is ready!"
-        break
-    fi
-    echo -n "."
-    sleep 2
-    WAITED=$((WAITED + 2))
-done
-echo ""
+if [ "${USE_BLISS}" = "true" ]; then
+    echo "Waiting for BLISS REST API to be ready on ${VM_HOST}:${BLISS_REMOTE_PORT}..."
+    MAX_WAIT=120
+    WAITED=0
+    while [ $WAITED -lt $MAX_WAIT ]; do
+        if ssh ${VM_HOST} "curl -sf http://localhost:${BLISS_REMOTE_PORT}/api/info > /dev/null 2>&1"; then
+            echo "BLISS REST API is ready!"
+            break
+        fi
+        echo -n "."
+        sleep 2
+        WAITED=$((WAITED + 2))
+    done
+    echo ""
 
-if [ $WAITED -ge $MAX_WAIT ]; then
-    echo "Warning: BLISS REST API not reachable after ${MAX_WAIT}s — mxcubeweb may fail to connect."
+    if [ $WAITED -ge $MAX_WAIT ]; then
+        echo "Warning: BLISS REST API not reachable after ${MAX_WAIT}s — mxcubeweb may fail to connect."
+    fi
 fi
 
 echo "Checking mxcubeweb service status on ${VM_HOST}..."
@@ -122,24 +125,28 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 
     # Create SSH tunnel
 
+    TUNNEL_ARGS=(-N -L ${LOCAL_PORT}:localhost:${REMOTE_PORT})
+
     echo ""
     echo "Creating SSH tunnels..."
     echo "MXCubeWeb      - Local port: ${LOCAL_PORT}"
-    echo "Bliss REST API - Local port: ${BLISS_LOCAL_PORT}"
+    if [ "${USE_BLISS}" = "true" ]; then
+        echo "Bliss REST API - Local port: ${BLISS_LOCAL_PORT}"
+        TUNNEL_ARGS+=(-L ${BLISS_LOCAL_PORT}:localhost:${BLISS_REMOTE_PORT})
+    fi
     if [ "${VIDEO_STREAMER_UP}" = true ]; then
         echo "Video Streamer - Local port: 8000"
+        TUNNEL_ARGS+=(-L 8000:localhost:8000)
     fi
     echo "MXCubeWeb URL: https://${VM_HOST}:${REMOTE_PORT}"
-    echo "Bliss API URL: http://localhost:${BLISS_LOCAL_PORT}/api/info"
+    if [ "${USE_BLISS}" = "true" ]; then
+        echo "Bliss API URL: http://localhost:${BLISS_LOCAL_PORT}/api/info"
+    fi
     echo ""
     echo "Use scripts/stop.sh to stop the tunnels and close the application"
     echo ""
 
-    if [ "${VIDEO_STREAMER_UP}" = true ]; then
-        ssh -N -L ${LOCAL_PORT}:localhost:${REMOTE_PORT} -L 8000:localhost:8000 -L ${BLISS_LOCAL_PORT}:localhost:${BLISS_REMOTE_PORT} ${VM_HOST}
-    else
-        ssh -N -L ${LOCAL_PORT}:localhost:${REMOTE_PORT} -L ${BLISS_LOCAL_PORT}:localhost:${BLISS_REMOTE_PORT} ${VM_HOST}
-    fi
+    ssh "${TUNNEL_ARGS[@]}" ${VM_HOST}
 else
     echo ""
     echo "No SSH tunnel created."

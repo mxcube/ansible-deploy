@@ -4,16 +4,13 @@ server:
   SECRET_KEY: ASECRETKEY
   SECURITY_PASSWORD_SALT: ASALT
   PERMANENT_SESSION_LIFETIME: 60
-  CERT: ADHOC
+  CERT: NONE
 
   DEBUG: false
 
   ALLOWED_CORS_ORIGINS:
-    - "https://id30b.mxcube.esrf.fr"
-    - "wss://id30b.mxcube.esrf.fr"
-    - "https://id30b-video.mxcube.esrf.fr"
-    - "wss://id30b-video.mxcube.esrf.fr"
-    - "https://id30b-video.mxcube.esrf.fr"
+    - "http://localhost:8081"
+    - "ws://localhost:8081"
   HOST: "0.0.0.0"
   PORT: 8081
   USER_DB_PATH: /tmp/mxcube-user.db
@@ -33,7 +30,7 @@ sso:
 mxcube:
   USE_EXTERNAL_STREAMER: True
   VIDEO_FORMAT: MPEG1
-  VIDEO_STREAM_URL: "wss://id30b-video.mxcube.esrf.fr/ws"
+  VIDEO_STREAM_URL: ""
 
   # At which port to stream from
   VIDEO_STREAM_PORT: 8000
