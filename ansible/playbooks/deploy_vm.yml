@@ -19,7 +19,7 @@
           - redis-server
           - tmux
         state: present
-      when: ansible_os_family == "Debian"
+      when: ansible_facts['os_family'] == "Debian"
       tags: [system, dependencies]
 
     # Create the base installation directory for this VM
@@ -119,7 +119,7 @@
           - "--exclude=__pycache__"
           - "--exclude=*.pyc"
       become_user: "{{ service_user }}"
-      when: use_local_repos
+      when: use_local_repos and not (use_local_repos_in_place | default(false))
       tags: [repositories, mxcubecore, local, update]
 
     - name: Copy local mxcubeweb repository
@@ -135,7 +135,7 @@
           - "--exclude=node_modules"
           - "--exclude=ui/build"
       become_user: "{{ service_user }}"
-      when: use_local_repos
+      when: use_local_repos and not (use_local_repos_in_place | default(false))
       tags: [repositories, mxcubeweb, local, update]
 
     - name: Copy local bliss repository
@@ -149,7 +149,7 @@
           - "--exclude=__pycache__"
           - "--exclude=*.pyc"
       become_user: "{{ service_user }}"
-      when: use_local_repos and (use_bliss | default(false))
+      when: use_local_repos and (use_bliss | default(false)) and not (use_local_repos_in_place | default(false))
       tags: [repositories, bliss, local, update]
 
     - name: Clone mxcubecore from GitHub
@@ -264,9 +264,9 @@
       poll: 30
       tags: [conda, environment, update, env_update]
 
-    - name: Check if bliss_dev conda env exists
+    - name: Check if bliss_dev conda env is fully installed
       ansible.builtin.stat:
-        path: "{{ install_base_path }}/miniconda/envs/bliss_dev"
+        path: "{{ install_base_path }}/miniconda/envs/bliss_dev/bin/bliss"
       register: bliss_dev_env
       when: use_bliss | default(false)
       tags: [conda, environment, bliss]
@@ -304,6 +304,7 @@
         cmd: |
           source {{ install_base_path }}/miniconda/etc/profile.d/conda.sh
           conda activate bliss_dev
+          conda list pip | grep -q '^pip ' || mamba install --yes pip -c conda-forge
           pip install -e ./blissdemo
       args:
         chdir: "{{ install_base_path }}/bliss"
@@ -329,17 +330,35 @@
 
     - name: Fix attrs in mxcubeweb env (required by pip/poetry)
       ansible.builtin.command:
-        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pip install --force-reinstall 'attrs>=22.1.0'"
+        cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/pip install --force-reinstall 'attrs>=22.1.0'"
+      environment:
+        PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
       become: false
       changed_when: false
       tags: [python, dependencies, mxcubeweb, update]
 
-    - name: Install Mxcubeweb dependencies with Poetry
+    - name: Remove any stale Poetry-managed virtualenv for mxcubeweb
       ansible.builtin.command:
-        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb poetry install"
+        cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/poetry env remove --all"
       args:
         chdir: "{{ install_base_path }}/mxcubeweb"
+      environment:
+        PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
+      become_user: "{{ service_user }}"
+      become: false
+      changed_when: false
+      failed_when: false
+      tags: [python, dependencies, mxcubeweb, update]
+
+    - name: Install Mxcubeweb dependencies with Poetry
+      ansible.builtin.command:
+        cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/poetry install"
+      args:
+        chdir: "{{ install_base_path }}/mxcubeweb"
+      environment:
+        POETRY_VIRTUALENVS_CREATE: "false"
+        PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
       become: false
       changed_when: false
@@ -347,9 +366,11 @@
 
     - name: Install mxcubecore in editable mode (no-deps)
       ansible.builtin.command:
-        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pip install -e . --no-deps"
+        cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/pip install -e . --no-deps"
       args:
         chdir: "{{ install_base_path }}/mxcubecore"
+      environment:
+        PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
       become: false
       changed_when: false
@@ -357,7 +378,9 @@
 
     - name: Install extra pip packages in mxcubeweb env
       ansible.builtin.command:
-        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pip install {{ conda_environments.mxcube.pip_packages | join(' ') }}"
+        cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/pip install {{ conda_environments.mxcube.pip_packages | join(' ') }}"
+      environment:
+        PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
       become: false
       changed_when: false
@@ -366,9 +389,14 @@
     # Frontend build
     - name: Install UI dependencies
       ansible.builtin.command:
-        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pnpm --prefix ui install"
+        cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/pnpm --prefix ui install"
       args:
         chdir: "{{ install_base_path }}/mxcubeweb"
+      environment:
+        # pnpm's shebang is `#!/usr/bin/env node` — without the env's bin/
+        # on PATH, `env` can't find node even though we call pnpm itself
+        # by absolute path.
+        PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
       become: false
       changed_when: false
@@ -378,9 +406,11 @@
 
     - name: Build UI
       ansible.builtin.command:
-        cmd: "{{ install_base_path }}/miniconda/bin/conda run -n mxcubeweb pnpm --prefix ui build"
+        cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/pnpm --prefix ui build"
       args:
         chdir: "{{ install_base_path }}/mxcubeweb"
+      environment:
+        PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
       become: false
       async: 1800
@@ -529,7 +559,7 @@
         msg: >-
           BLISS server: bliss-server-{{ vm_context }}.
           BLISS session: bliss-session-{{ vm_context }}.
-          BLISS REST API: http://{{ ansible_hostname }}:5000/api
+          BLISS REST API: http://{{ ansible_facts['hostname'] }}:5000/api
       when: use_bliss | default(false)
       tags: [always]
 

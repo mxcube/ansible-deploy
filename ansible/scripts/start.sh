@@ -1,11 +1,16 @@
 #!/bin/bash
 
-# Script to deploy and start MXCubeWeb with SSH tunnel
+# Script to deploy and start MXCubeWeb.
+# On a remote target, also offers to open an SSH tunnel. On a local target
+# (ansible_connection: local in inventory.yaml), MXCubeWeb is reached
+# directly on localhost — no tunnel involved.
 
 set -e
 
 SCRIPT_ROOT="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 PROJECT_ROOT="$(realpath "${SCRIPT_ROOT}/../")"
+# shellcheck source=lib.sh
+source "${SCRIPT_ROOT}/lib.sh"
 
 # Auto-load secrets file if present
 for SECRETS_FILE in "${SCRIPT_ROOT}/mxcube_secrets" "${HOME}/.mxcube_secrets"; do
@@ -17,10 +22,15 @@ for SECRETS_FILE in "${SCRIPT_ROOT}/mxcube_secrets" "${HOME}/.mxcube_secrets"; d
     fi
 done
 
-# Configuration
-VM_HOST=$(grep "ansible_host:" "${PROJECT_ROOT}/inventory.yaml" | head -1 | awk '{print $2}')
-VM_CONTEXT=$(grep "vm_context:" "${PROJECT_ROOT}/inventory.yaml" | head -1 | awk -F'"' '{print $2}')
+resolve_target "${PROJECT_ROOT}/inventory.yaml"
+
 USE_BLISS=$(grep -E "^use_bliss:" "${PROJECT_ROOT}/playbooks/group_vars/all/vars.yml" | awk '{print $2}')
+CERT=$(grep -E "^\s*cert:" "${PROJECT_ROOT}/playbooks/group_vars/all/vars.yml" | awk '{print $2}' | tr -d '"')
+if [ "${CERT}" = "NONE" ] || [ -z "${CERT}" ]; then
+    PROTOCOL="http"
+else
+    PROTOCOL="https"
+fi
 REMOTE_PORT=8081
 LOCAL_PORT=8081
 BLISS_REMOTE_PORT=5000
@@ -56,11 +66,11 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
 fi
 
 if [ "${USE_BLISS}" = "true" ]; then
-    echo "Waiting for BLISS REST API to be ready on ${VM_HOST}:${BLISS_REMOTE_PORT}..."
+    echo "Waiting for BLISS REST API to be ready on ${TARGET_DISPLAY}:${BLISS_REMOTE_PORT}..."
     MAX_WAIT=120
     WAITED=0
     while [ $WAITED -lt $MAX_WAIT ]; do
-        if ssh ${VM_HOST} "curl -sf http://localhost:${BLISS_REMOTE_PORT}/api/info > /dev/null 2>&1"; then
+        if run_on_target "curl -sf http://localhost:${BLISS_REMOTE_PORT}/api/info > /dev/null 2>&1"; then
             echo "BLISS REST API is ready!"
             break
         fi
@@ -75,20 +85,20 @@ if [ "${USE_BLISS}" = "true" ]; then
     fi
 fi
 
-echo "Checking mxcubeweb service status on ${VM_HOST}..."
-if ssh ${VM_HOST} "systemctl is-active --quiet mxcubeweb-${VM_CONTEXT}"; then
+echo "Checking mxcubeweb service status on ${TARGET_DISPLAY}..."
+if run_on_target "systemctl is-active --quiet mxcubeweb-${TARGET_VM_CONTEXT}"; then
     echo "Service is running — restarting..."
-    ssh -t ${VM_HOST} "sudo systemctl restart mxcubeweb-${VM_CONTEXT}"
+    run_on_target "systemctl restart mxcubeweb-${TARGET_VM_CONTEXT}" --sudo --tty
 else
     echo "Service is not running, starting it..."
-    ssh -t ${VM_HOST} "sudo systemctl start mxcubeweb-${VM_CONTEXT}"
+    run_on_target "systemctl start mxcubeweb-${TARGET_VM_CONTEXT}" --sudo --tty
 fi
 
 echo "Waiting for mxcubeweb to be ready..."
 MAX_WAIT=120
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
-    if ssh ${VM_HOST} "ss -tlnp | grep -q :${REMOTE_PORT}"; then
+    if run_on_target "ss -tlnp | grep -q :${REMOTE_PORT}"; then
         echo "MXCubeWeb is ready!"
         break
     fi
@@ -105,12 +115,26 @@ else
 fi
 
 # Check video streamer (optional — does not block startup)
-if ssh ${VM_HOST} "ss -tlnp | grep -q :8000" 2>/dev/null; then
+if run_on_target "ss -tlnp | grep -q :8000" 2>/dev/null; then
     VIDEO_STREAMER_UP=true
     echo "Video streamer is ready on port 8000."
 else
     VIDEO_STREAMER_UP=false
     echo "Video streamer not detected on port 8000 — skipping (optional)."
+fi
+
+if is_local_target; then
+    # Deployed on this machine — reached directly, no tunnel needed.
+    echo ""
+    echo "MXCubeWeb URL: ${PROTOCOL}://localhost:${REMOTE_PORT}"
+    if [ "${USE_BLISS}" = "true" ]; then
+        echo "Bliss API URL: http://localhost:${BLISS_REMOTE_PORT}/api/info"
+    fi
+    if [ "${VIDEO_STREAMER_UP}" = true ]; then
+        echo "Video Streamer: http://localhost:8000"
+    fi
+    echo ""
+    exit 0
 fi
 
 # Ask if user wants to create SSH tunnel
@@ -126,6 +150,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     # Create SSH tunnel
 
     TUNNEL_ARGS=(-N -L ${LOCAL_PORT}:localhost:${REMOTE_PORT})
+    [ -n "${TARGET_PORT}" ] && TUNNEL_ARGS+=(-p "${TARGET_PORT}")
 
     echo ""
     echo "Creating SSH tunnels..."
@@ -138,7 +163,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
         echo "Video Streamer - Local port: 8000"
         TUNNEL_ARGS+=(-L 8000:localhost:8000)
     fi
-    echo "MXCubeWeb URL: https://${VM_HOST}:${REMOTE_PORT}"
+    echo "MXCubeWeb URL: ${PROTOCOL}://${TARGET_DISPLAY}:${REMOTE_PORT}"
     if [ "${USE_BLISS}" = "true" ]; then
         echo "Bliss API URL: http://localhost:${BLISS_LOCAL_PORT}/api/info"
     fi
@@ -146,7 +171,7 @@ if [[ $REPLY =~ ^[Yy]$ ]]; then
     echo "Use scripts/stop.sh to stop the tunnels and close the application"
     echo ""
 
-    ssh "${TUNNEL_ARGS[@]}" ${VM_HOST}
+    ssh "${TUNNEL_ARGS[@]}" "${TARGET_USER:+${TARGET_USER}@}${TARGET_SSH_HOST}"
 else
     echo ""
     echo "No SSH tunnel created."

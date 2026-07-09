@@ -68,7 +68,7 @@ done
 
 # Detect whether passwordless sudo works on the target (used for both quick and full deploys)
 BECOME_ARGS=()
-if ! ansible -i "${INVENTORY}" all -m command -a "true" --become --timeout 10 -q 2>/dev/null; then
+if ! ansible -i "${INVENTORY}" all -m command -a "true" --become --timeout 10 >/dev/null 2>&1; then
     echo "Sudo requires a password on the target — you will be prompted once."
     BECOME_ARGS=(--ask-become-pass)
 fi

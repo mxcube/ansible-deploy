@@ -12,31 +12,48 @@ This repository contains everything needed to run and deploy MXCubeWeb:
 
 ## Quick overview
 
-### Production — Ansible deployment to a VM
+### Production — Ansible deployment to a VM, or to your own machine
 
-Deploys MXCubeWeb as a systemd service on one or more target VMs.
-Manages the conda environment, Python/JS dependencies, systemd units,
-and the Docker hardware simulators.
+Deploys MXCubeWeb as a systemd service, either on a remote target VM/server
+over SSH, or directly on the machine you run the playbook from. Manages the
+conda environment, Python/JS dependencies, systemd units, and the Docker
+hardware simulators — the steps below are identical either way, except
+where noted.
 
 #### Prerequisites
 
-- Ansible installed locally (`./ansible/scripts/install_ansible.sh`)
-- SSH access to the target VM(s)
-- Docker and the Compose plugin already installed on each target VM
+- Ansible installed locally (`./ansible/scripts/install_ansible.sh`; open a
+  new terminal afterwards so the updated `PATH` takes effect)
+- `jq` installed locally (`sudo apt install jq`) — required by the deploy
+  scripts to parse inventory data
+- SSH access to the target VM(s) — not needed when deploying on your own machine
+- Docker and the Compose plugin already installed on the target
   (the playbook manages containers via `docker-compose` but does not install Docker itself)
-- Docker images loaded on each VM (see [Loading Docker images](#7-load-docker-images-on-the-vm-first-time))
+- Docker images loaded on the target (see [Loading Docker images](#7-load-docker-images-on-the-vm-first-time))
 
 #### 1. Configure the inventory
 
-Edit [`ansible/inventory.yaml`](ansible/inventory.yaml):
+Edit [`ansible/inventory.yaml`](ansible/inventory.yaml) and keep exactly
+**one** of the two host entries active:
 
 ```yaml
 mxcube_vms:
   hosts:
-    mxcube_vm1:
-      ansible_host: YOUR_VM_HOSTNAME_OR_IP
-      vm_context: "mxcube_vm1"
+    # Option A: deploy on THIS machine — no SSH involved
+    localhost:
+      ansible_connection: local
+      vm_context: "mxcube_local"
+
+    # Option B: deploy on a remote VM/server over SSH
+    # mxcube_vm1:
+    #   ansible_host: YOUR_VM_HOSTNAME_OR_IP
+    #   vm_context: "mxcube_vm1"
 ```
+
+With Option A, all scripts below (`start.sh`, `deploy.sh`, `stop.sh`,
+`restart.sh`, `setup_ssh.sh`) run every command directly on your machine
+instead of over SSH, and MXCubeWeb is reached straight at
+`https://localhost:8081` — no SSH tunnel step.
 
 #### 2. Configure variables
 
@@ -47,13 +64,25 @@ Key variables:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `install_base_path` | `/opt/mxcube` | Install root on the VM |
+| `install_base_path` | `/opt/mxcube` | Install root on the target |
 | `service_user` | current user | User that runs the service |
 | `use_local_repos` | `true` | Sync from local paths vs. clone from GitHub |
 | `mxcubeweb_config.port` | `8081` | Port exposed by MXCubeWeb |
 | `use_bliss` | `false` | Enable BLISS backend |
 | `mxcubeweb_config.external_url` | `https://your-mxcube-host.example.com` | Public URL of the deployment |
 | `mxcubeweb_config.allowed_cors_origins` | `[]` | Origins allowed to open a SocketIO connection |
+
+> When deploying on your own machine (`ansible_connection: local`), by default
+> the playbook rsyncs `local_mxcubeweb_path`/`local_mxcubecore_path` into
+> `install_base_path`, so keep that different from your checkouts.
+>
+> To skip the copy and run directly against your working checkouts instead
+> (no rsync, editable installs point straight at your source tree), set
+> `use_local_repos_in_place: true` and point `install_base_path` at the
+> parent directory containing both checkouts as siblings named `mxcubecore`
+> and `mxcubeweb` (e.g. `install_base_path: "~/mxcube"`). Note that
+> `server.yaml` then gets templated straight into your mxcubeweb working
+> tree, so it will show up as a modified file after each deploy.
 
 > Leave `use_bliss: false` unless you have access to it,
 > or set `use_local_repos: true` with your own `local_bliss_path`.
@@ -133,6 +162,12 @@ cd ansible
 ./scripts/setup_ssh.sh
 ```
 
+Run this either way: for a remote target it copies your SSH key and
+configures passwordless sudo over SSH; for a local target (`ansible_connection:
+local`) it skips SSH entirely and just configures passwordless sudo on your
+own machine so `deploy.sh`/`start.sh` don't prompt for your password on every
+run.
+
 #### 7. Load Docker images on the VM
 
 The playbook downloads and loads the hardware simulator images automatically
@@ -164,8 +199,10 @@ cd ansible
 ```
 
 The script asks whether to do a full deploy or a quick code-only update,
-waits for the BLISS REST API and MXCubeWeb to be ready, then optionally
-opens an SSH tunnel so you can reach the interface at `http://localhost:8081`.
+then waits for the BLISS REST API and MXCubeWeb to be ready. On a remote
+target, it then optionally opens an SSH tunnel so you can reach the
+interface at `http://localhost:8081`. On a local target, MXCubeWeb is
+already reachable at `https://localhost:8081` — no tunnel step.
 
 #### Available scripts
 

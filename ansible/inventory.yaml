@@ -1,8 +1,23 @@
 ---
-# Inventory of VMs for MXCubeWeb
+# Inventory of targets for MXCubeWeb deployment.
+#
+# Keep exactly ONE of the two host entries below active (uncomment the one
+# you want, comment out / delete the other):
+#
+#   - "localhost"   deploys on this same machine, no SSH involved at all.
+#   - "mxcube_vm1"  deploys on a remote VM/server over SSH — run
+#                   ./scripts/setup_ssh.sh once first to set up key-based
+#                   access and passwordless sudo.
 
 mxcube_vms:
   hosts:
+    # --- Option A: deploy on THIS machine ---
+    # localhost:
+    #   ansible_connection: local
+    #   ansible_python_interpreter: /usr/bin/python3
+    #   vm_context: "mxcube_local"
+
+    # --- Option B: deploy on a remote VM/server ---
     mxcube_vm1:
       ansible_host: YOUR_VM_HOSTNAME_OR_IP
       ansible_python_interpreter: /usr/bin/python3
