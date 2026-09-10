@@ -6,8 +6,9 @@ This repository contains everything needed to run and deploy MXCubeWeb:
 |-----------|---------|
 | [`docker/`](docker/) | Development container (Debian 10, VNC desktop, conda) |
 | [`ansible/`](ansible/) | Ansible playbooks for deploying to a VM |
-| [`demo.bliss.yaml/`](demo.bliss.yaml/) | Hardware object YAML configs for the mock beamline (real BLISS backend) |
-| [`demo.mockup.yaml/`](demo.mockup.yaml/) | Same, with every hardware object swapped for its `*Mockup` equivalent (no BLISS) |
+| [`demo.yaml/`](demo.yaml/) | Hardware object YAML configs for the mock beamline (standalone, no BLISS needed) |
+| [`bliss.overlay/`](bliss.overlay/) | Optional overlay: the files that change to use real BLISS-backed hardware instead |
+| [`lims-icat.overlay/`](lims-icat.overlay/) | Optional overlay: the files that change when using a real ICAT+ backend instead of the ISPyB mockup |
 
 ---
 
@@ -46,13 +47,13 @@ mxcube_vms:
     # localhost:
     #   ansible_connection: local
     #   vm_context: "mxcube_local"
-    #   use_bliss: true    # real BLISS-backed hardware config (demo.bliss.yaml)
+    #   use_bliss: true    # applies bliss.overlay/ for real BLISS-backed hardware
 
     # Option B: deploy on a remote VM/server over SSH
     mxcube_vm1:
       ansible_host: YOUR_VM_HOSTNAME_OR_IP
       vm_context: "mxcube_vm1"
-      use_bliss: false    # no BLISS on this VM — mockup hardware config (demo.mockup.yaml)
+      use_bliss: false    # no BLISS on this VM — standalone mockup hardware config
 ```
 
 With Option A, all scripts below (`start.sh`, `deploy.sh`, `stop.sh`,
@@ -65,7 +66,7 @@ environment needs); nothing here manages that for you.
 > `use_bliss` is set **per host** here, not just in `vars.yml` — different
 > targets can run different hardware configs at the same time (e.g. one
 > real-BLISS host, one standalone mockup host). See
-> [Hardware configuration](#hardware-configuration--demobliss-yaml--demomockup-yaml)
+> [Hardware configuration](#hardware-configuration--demoyaml--blissoverlay)
 > below for what that actually switches.
 
 #### 2. Configure variables
@@ -79,7 +80,7 @@ Key variables:
 |----------|---------|-------------|
 | `install_base_path` | `/opt/mxcube` | Install root on the target |
 | `service_user` | current user | User that runs the service — see [Dedicated service user](#optional-dedicated-service-user) to create one instead of using your own account |
-| `mxcube_config_dir` | derived from `use_bliss` | Which hardware config directory gets deployed — see [Hardware configuration](#hardware-configuration--demobliss-yaml--demomockup-yaml) |
+| `mxcube_config_dir` | `demo.yaml` | Base hardware config directory — see [Hardware configuration](#hardware-configuration--demoyaml--blissoverlay) for how `use_bliss`/`use_icat` overlay it |
 | `mxcubeweb_config.port` | `8081` | Port exposed by MXCubeWeb |
 | `use_bliss` | `true` | Fallback if a host doesn't set its own `use_bliss` in `inventory.yaml` (see step 1) |
 | `mxcubeweb_config.external_url` | `https://your-mxcube-host.example.com` | Public URL of the deployment |
@@ -87,12 +88,13 @@ Key variables:
 | `mxcubeweb_config.user_db_path` | `{{ install_base_path }}/data/mxcube-user.db` | Local user-account database — kept off `/tmp` so it survives reboots and is reliably writable by `service_user` |
 | `mxcubeweb_video.stream_url` | `ws://<target host>:8000/ws` | Video stream URL handed to the frontend; must be `ws://`/`wss://`, not `http(s)://` — the UI opens it as a raw WebSocket |
 | `mxcubeweb_video.mxcube_starts_stream` | `true` | Whether MXCubeWeb spawns its own `video-streamer`/`ffmpeg` process. Leave `true` unless you're running a separate/external streamer — with it `false` and nothing else providing a stream, nothing will be listening on `stream_port` at all |
+| `use_icat` | `false` | Deploy a real ICAT+ backend instead of the ISPyB mockup — see [ICAT integration](#icat-integration-optional) |
 
 > The playbook always clones `mxcubecore`/`mxcubeweb` fresh from their
 > `develop` branch on GitHub into `install_base_path` (even when deploying
 > on your own machine with `ansible_connection: local`). This repository's
-> `server.yaml.j2` and `demo.bliss.yaml`/`demo.mockup.yaml` configs are only
-> tested against the versions checked out alongside it — the latest `develop` may have moved on
+> `server.yaml.j2` and `demo.yaml`/`bliss.overlay` configs are only tested
+> against the versions checked out alongside it — the latest `develop` may have moved on
 > and be incompatible (different config fields, renamed hardware objects,
 > etc.). Pin `mxcubecore_version`/`mxcubeweb_version` to a known-good ref if
 > that matters to you.
@@ -265,28 +267,87 @@ sudo systemctl restart mxcubeweb-mxcube_vm1
 
 ---
 
-### Hardware configuration — demo.bliss.yaml / demo.mockup.yaml
+### Hardware configuration — demo.yaml / bliss.overlay
 
-There are two parallel hardware-object config directories for the mock
-beamline (minidiff, sample changer, detectors, etc.), kept in sync with each
-other except for which backend each hardware object talks to:
+[`demo.yaml/`](demo.yaml/) is the hardware-object config for the mock
+beamline (minidiff, sample changer, detectors, etc.) — standalone, no BLISS
+needed, using `*Mockup` hardware classes throughout.
 
-- [`demo.bliss.yaml/`](demo.bliss.yaml/) — real BLISS-backed hardware objects
-  (`BlissMotor`, `BlissShutter`, `BlissNState`, `BlissEnergy`, ...). Requires
-  `use_bliss: true` and access to BLISS.
-- [`demo.mockup.yaml/`](demo.mockup.yaml/) — every one of those swapped for
-  its `*Mockup` equivalent, so the beamline runs standalone with no BLISS
-  dependency at all.
+When `use_bliss: true` (per-host in `inventory.yaml`, step 1),
+[`bliss.overlay/`](bliss.overlay/) is deployed on top of it as a last step,
+replacing only the files that actually differ for real BLISS-backed
+hardware (`BlissMotor`, `BlissShutter`, `BlissNState`, `BlissEnergy`,
+`bliss_proxy`, ...) — not a second full copy of the whole config directory.
+Same pattern as [ICAT integration](#icat-integration-optional) below.
 
-`mxcube_config_dir` in `vars.yml` picks between them automatically based on
-`use_bliss` — you don't need to set it yourself. To switch to a real
-beamline configuration instead of either of these, point `mxcube_config_dir`
-at your own site-specific config directory.
+To switch to a real beamline configuration instead, point `mxcube_config_dir`
+in `vars.yml` at your own site-specific config directory.
 
 > `drac.yaml` (ICAT/DRAC LIMS) and `session.yaml` (synchrotron name, email
-> domain, in-house proposal codes), present in both directories, are kept as
+> domain, in-house proposal codes), present in `demo.yaml/`, are kept as
 > working ESRF examples and contain ESRF-specific hostnames and values.
 > Adapt or replace them before deploying.
+
+---
+
+### ICAT integration (optional)
+
+Set `use_icat: true` in `vars.yml` to replace the ISPyB mockup LIMS with a
+real ICAT+ backend, deployed as its own Docker Compose stack alongside the
+hardware simulators — from
+[ci-icat-testing-compose](https://gitlab.esrf.fr/icat/ci-testing-platform/ci-icat-testing-compose),
+with `icat`, `auth-db`, `mariadb`, `mongodb`, `icat-plus`, and `activemq`
+(dataset ingestion — `icat-plus`'s `MESSAGE_ENABLED`/`TRACKING_ENABLED`).
+Off by default — it's a heavier stack than the rest of this deployment.
+
+> `pyicat_plus`'s `ICATLIMS` hardware object (as of this writing) hardcodes
+> `bcu-mq-01:61613` — ESRF's real production broker — as the metadata/
+> reschedule message target, rather than reading it from config. That means
+> dataset-ingestion messages from this deployment's `ICATLIMS` won't reach
+> *this* stack's own `activemq` container even with it running; only
+> ICAT+/auth-db/database queries (`ws_root`) are actually wired through
+> `lims-icat.yaml` right now. Fixing this needs either a newer mxcubecore
+> where that URL is configurable, or a local patch — flagging it rather
+> than silently pretending ingestion is fully wired end-to-end.
+
+All the ICAT images come from ESRF's private registries
+(`gitlab-registry.esrf.fr`, `harbor.esrf.fr`) — two separate systems with
+separate credentials, so this needs both. Either set them in the vault:
+
+```yaml
+# ansible/playbooks/group_vars/all/vault.yml
+vault_icat_gitlab_registry_user: "..."
+vault_icat_gitlab_registry_password: "..."
+vault_icat_harbor_registry_user: "..."
+vault_icat_harbor_registry_password: "..."
+```
+
+or leave them unset — the playbook prompts for each pair interactively at
+deploy time instead.
+
+> If your ESRF account uses SSO, Harbor typically **rejects your regular
+> login password** for `docker login`/registry API auth (it'll fail with a
+> 401 even though the same login works fine in the browser). Use the CLI
+> secret from Harbor's web UI instead: your username (top right) → User
+> Profile → CLI secret.
+
+What actually happens when `use_icat: true`:
+
+1. The ICAT stack is deployed to `{{ install_base_path }}/icat-compose` and
+   started via `docker compose`, same as the hardware simulators.
+2. On top of `demo.yaml/` (and `bliss.overlay/`, if `use_bliss` is also
+   true), [`lims-icat.overlay/`](lims-icat.overlay/) is applied — a small
+   overlay containing *only the files that actually change* for real ICAT,
+   not a third full copy of the whole config directory: `lims-icat.yaml`
+   (the new `ICATLIMS` hardware object) gets deployed, and `beamline.yaml`'s
+   `lims:` line is repointed at it in place.
+
+> `icat_config` (`DB_URL`, `DB_DRIVER`, ports, versions) matches the real
+> `.env` checked into the upstream repo — not invented defaults. What's
+> still best-effort: `lims-icat.yaml`, against a class (`ICATLIMS` in
+> mxcubecore) that's still evolving upstream, built without access to a
+> real ICAT stack to test end-to-end from here. Expect to verify/adjust it
+> after your first real deploy.
 
 ---
 
@@ -299,6 +360,7 @@ ansible-deploy/
 │   ├── ansible.cfg
 │   ├── requirements.yml        # Required Ansible collections (community.docker)
 │   ├── docker-compose.yml      # Hardware simulator services
+│   ├── icat-docker-compose.yml # Optional ICAT+ stack (use_icat)
 │   ├── playbooks/
 │   │   ├── deploy_vm.yml       # Main deploy playbook
 │   │   ├── create_service_user.yml  # Standalone: create the mxop service account
@@ -309,8 +371,9 @@ ansible-deploy/
 │   │   │   └── vault.yml       # Encrypted secrets (not committed)
 │   │   └── templates/          # Jinja2 systemd/config templates
 │   └── scripts/                # Helper shell scripts (start/deploy/restart/stop)
-├── demo.bliss.yaml/             # Mock beamline hardware objects (real BLISS backend)
-├── demo.mockup.yaml/            # Mock beamline hardware objects (no BLISS, *Mockup classes)
+├── demo.yaml/                   # Mock beamline hardware objects (standalone, no BLISS)
+├── bliss.overlay/               # Optional: files that change for real BLISS-backed hardware
+├── lims-icat.overlay/           # Optional: files that change for a real ICAT+ backend
 └── docker/                     # Development container
     ├── Dockerfile
     ├── docker-compose.yml      # Hardware simulators for local dev

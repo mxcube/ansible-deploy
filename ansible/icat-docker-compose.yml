@@ -1,0 +1,99 @@
+# Trimmed from https://gitlab.esrf.fr/icat/ci-testing-platform/ci-icat-testing-compose
+services:
+  activemq:
+    image: webcenter/activemq:5.14.3
+    container_name: activemq
+    ports:
+      - "1883:1883"   # mqtt
+      - "5672:5672"   # amqp
+      - "8161:8161"   # ui
+      - "61613:61613" # stomp
+      - "61614:61614" # ws
+      - "61616:61616" # jms
+    environment:
+      - ACTIVEMQ_REMOVE_DEFAULT_ACCOUNT=${ACTIVEMQ_REMOVE_DEFAULT_ACCOUNT}
+      - ACTIVEMQ_ADMIN_LOGIN=${ACTIVEMQ_ADMIN_LOGIN}
+      - ACTIVEMQ_ADMIN_PASSWORD=${ACTIVEMQ_ADMIN_PASSWORD}
+      - ACTIVEMQ_WRITE_LOGIN=${ACTIVEMQ_WRITE_LOGIN}
+      - ACTIVEMQ_WRITE_PASSWORD=${ACTIVEMQ_WRITE_PASSWORD}
+      - ACTIVEMQ_READ_LOGIN=${ACTIVEMQ_READ_LOGIN}
+      - ACTIVEMQ_READ_PASSWORD=${ACTIVEMQ_READ_PASSWORD}
+      - ACTIVEMQ_JMX_LOGIN=${ACTIVEMQ_JMX_LOGIN}
+      - ACTIVEMQ_JMX_PASSWORD=${ACTIVEMQ_JMX_PASSWORD}
+      - ACTIVEMQ_ENABLED_SCHEDULER=${ACTIVEMQ_ENABLED_SCHEDULER}
+      - ACTIVEMQ_MIN_MEMORY=${ACTIVEMQ_MIN_MEMORY}
+      - ACTIVEMQ_MAX_MEMORY=${ACTIVEMQ_MAX_MEMORY}
+
+  icat-plus:
+    container_name: icat-plus
+    image: gitlab-registry.esrf.fr/icat/ci-testing-platform/docker-icat-plus:latest
+    ports:
+      - "${ICAT_PLUS_PORT}:8000"
+    environment:
+      WAIT_HOSTS: icat:8080, activemq:61613
+      WAIT_AFTER: 30
+      WAIT_TIMEOUT: 400
+      WAIT_SLEEP_INTERVAL: 15
+      LOGGING_LEVEL: ${LOGGING_LEVEL}
+      ICAT_SERVER_PORT: 8080
+      ICAT_SERVER_URL: http://icat
+      MESSAGE_ENABLED: 1
+      TRACKING_ENABLED: 1
+
+  icat:
+    image: gitlab-registry.esrf.fr/icat/ci-testing-platform/icat-server:${ICAT_VERSION}
+    container_name: icat-${ICAT_VERSION}
+    ports:
+      - "${ICAT_PORT}:8080"
+      - "${ICAT_PORT_CONSOLE_ADMIN}:4848"
+    environment:
+      WAIT_HOSTS: mariadb:3306, auth-db:8080
+      WAIT_TIMEOUT: 300
+      WAIT_SLEEP_INTERVAL: 10
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_URL: ${DB_URL}
+      DB_DRIVER: ${DB_DRIVER}
+      ICAT_VERSION: ${ICAT_VERSION}
+
+  auth-db:
+    image: gitlab-registry.esrf.fr/icat/ci-testing-platform/icat-auth-db:latest
+    container_name: auth-db
+    ports:
+      - "${AUTH_DB_PORT}:8080"
+      - "${AUTH_DB_PORT_CONSOLE_ADMIN}:4848"
+    environment:
+      WAIT_HOSTS: mariadb:3306
+      WAIT_TIMEOUT: 300
+      WAIT_SLEEP_INTERVAL: 10
+      AUTH_DB_VERSION: ${AUTH_DB_VERSION}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_URL: ${DB_URL}
+      DB_DRIVER: ${DB_DRIVER}
+
+  mariadb:
+    image: harbor.esrf.fr/dau/mariadb:${MARIADB_VERSION}
+    container_name: database
+    ports:
+      - "${MARIADB_PORT}:3306"
+    environment:
+      - MARIADB_ROOT_PASSWORD=${MARIADB_ROOT_PASSWORD}
+      - MARIADB_DATABASE=${MARIADB_DATABASE}
+      - MARIADB_USER=${DB_USER}
+      - MARIADB_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - ./db-init/small-test-db.sql:/docker-entrypoint-initdb.d/small-test-db.sql
+
+  mongodb:
+    image: harbor.esrf.fr/dau/mongo:24.04
+    container_name: mongodb
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_USER}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: icatplus
+    command:
+      - "--logpath"
+      - "/var/log/mongodb/mongod.log"
+    ports:
+      - "${MONGO_PORT}:27017"

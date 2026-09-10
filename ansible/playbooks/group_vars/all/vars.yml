@@ -8,13 +8,11 @@ service_group: ""
 install_base_path: "/opt/mxcube"
 log_base_path: "/var/log/mxcube"
 
-# Subdirectory inside mxcubeweb that holds the hardware YAML configs.
-# Automatically follows use_bliss (defined below): demo.bliss.yaml wires up
-# the real BLISS-backed hardware objects, demo.mockup.yaml swaps every one
-# of those for its *Mockup equivalent so the beamline can run standalone,
-# without BLISS. Override explicitly here only if you need to decouple the
-# two (e.g. testing one config with the other's use_bliss setting).
-mxcube_config_dir: "{{ 'demo.bliss.yaml' if use_bliss else 'demo.mockup.yaml' }}"
+# Subdirectory inside mxcubeweb that holds the hardware YAML configs. This
+# is the standalone/mockup config by default (no BLISS needed) — when
+# use_bliss is true, bliss.overlay/ is applied on top of it afterwards (see
+# deploy_vm.yml), same overlay pattern as lims-icat.overlay/ for use_icat.
+mxcube_config_dir: "demo.yaml"
 
 # Python version used by the mxcubeweb conda environment
 mxcube_python_version: "3.11"
@@ -125,3 +123,70 @@ use_docker: true
 # Docker image tarball URLs
 arinax_docker_image_url: "https://cloud.esrf.fr/public.php/dav/files/7qtFP5iP9jiPB2M"
 flex_docker_image_url: "https://cloud.esrf.fr/public.php/dav/files/iAdyarEZmL9odxJ"
+
+# ICAT integration (real data-catalog/LIMS backend, replacing the ISPyB
+# mockup) — opt-in, off by default. Stack from
+# https://gitlab.esrf.fr/icat/ci-testing-platform/ci-icat-testing-compose
+# (icat, auth-db, mariadb, mongodb, icat-plus, activemq).
+use_icat: true
+
+# ICAT/auth-db/mariadb images come from gitlab-registry.esrf.fr; mariadb/
+# mongo base images come from harbor.esrf.fr. These are separate systems
+# with separate credentials — don't assume one login works for both.
+# Credentials are never stored in plain vars.yml:
+#   - set vault_icat_gitlab_registry_user/password and
+#     vault_icat_harbor_registry_user/password in vault.yml (see
+#     vault.yml.example), or
+#   - leave them unset and the playbook will prompt for them interactively
+#     when use_icat is true.
+#
+# Harbor note: if your ESRF account uses SSO, Harbor typically rejects your
+# regular login password for docker login/registry API auth — use the CLI
+# secret from Harbor's web UI (your username -> User Profile -> CLI secret)
+# instead.
+icat_gitlab_registry_user: "{{ vault_icat_gitlab_registry_user | default('') }}"
+icat_gitlab_registry_password: "{{ vault_icat_gitlab_registry_password | default('') }}"
+icat_harbor_registry_user: "{{ vault_icat_harbor_registry_user | default('') }}"
+icat_harbor_registry_password: "{{ vault_icat_harbor_registry_password | default('') }}"
+
+# Values below match the real .env checked into the upstream repo
+# (https://gitlab.esrf.fr/icat/ci-testing-platform/ci-icat-testing-compose/-/raw/main/.env)
+# rather than invented placeholders — known-working defaults for this exact
+# stack, not secrets (DB/service passwords for a throwaway local stack).
+icat_config:
+  icat_plus_port: 8090  # not 8000 - that's the video-streamer's port
+  icat_port: 8083
+  icat_port_console_admin: 9083
+  icat_version: "5.0.0"
+  auth_db_port: 8086
+  auth_db_port_console_admin: 9085
+  auth_db_version: "2.0.1"
+  mariadb_port: 3333
+  mariadb_version: "10.2"
+  mariadb_root_password: "ICATComposePassWord!"
+  mariadb_database: "icat"
+  db_user: "icat"
+  db_password: "maria"
+  db_url: "jdbc:mysql://database:3306/icat"
+  db_driver: "com.mysql.jdbc.jdbc2.optional.MysqlDataSource"
+  mongo_port: 27227
+  mongo_user: "mongo"
+  mongo_password: "mongo"
+  # ActiveMQ — message broker icat-plus uses for dataset ingestion
+  # (MESSAGE_ENABLED/TRACKING_ENABLED below). Credentials are for this
+  # throwaway local broker, not secrets.
+  activemq_remove_default_account: "true"
+  activemq_admin_login: "admin"
+  activemq_admin_password: "password"
+  activemq_write_login: "write"
+  activemq_write_password: "password"
+  activemq_read_login: "read"
+  activemq_read_password: "password"
+  activemq_jmx_login: "jmx"
+  activemq_jmx_password: "password"
+  activemq_enabled_scheduler: "true"
+  activemq_min_memory: 512
+  activemq_max_memory: 2048
+  # Seed data — small test fixture from the same upstream repo, fetched at
+  # deploy time rather than vendored here.
+  seed_sql_url: "https://gitlab.esrf.fr/icat/ci-testing-platform/ci-icat-testing-compose/-/raw/main/db-init/small-test-db.sql"

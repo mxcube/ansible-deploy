@@ -2,3 +2,17 @@
 vault_mxcube_secret_key: "921121440e404aaf5043928bf023d7e38da48fb1e4cf009615082f3160ad8bff"
 vault_mxcube_security_password_salt: "6da7982e4b5e755e597d985ca1002a35c064bd675fbe30c570780ffaaabc23e4"
 vault_mxcube_sso_client_secret: ""
+
+# ESRF registry credentials for pulling ICAT images. Left empty deliberately
+# — these aren't published anywhere in the upstream ICAT repo (that would
+# be a credential leak in a public repo), so there's nothing real to fill
+# in here. Either put your own ESRF credentials below, or leave them blank
+# and the playbook will prompt for them interactively when use_icat is true.
+vault_icat_gitlab_registry_user: ""
+vault_icat_gitlab_registry_password: ""
+
+# Harbor: if your account uses SSO, this is the CLI secret from Harbor's
+# web UI (your username -> User Profile -> CLI secret), NOT your regular
+# login password.
+vault_icat_harbor_registry_user: ""
+vault_icat_harbor_registry_password: ""

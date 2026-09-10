@@ -1,0 +1,13 @@
+%YAML 1.2
+---
+# ICAT+ LIMS backend — replaces lims.yaml (BLISS demo) / lims-mockup.yaml
+# (ISPyBClientMockup) when use_icat: true. See ICATLIMS.init() in
+# mxcubecore for the authoritative property list — this is a best-effort
+# config against a class that's still evolving upstream, not something
+# tested end-to-end here (no access to the real ICAT stack from this
+# environment). Verify/adjust after the first real deploy.
+class: ICATLIMS.ICATLIMS
+configuration:
+  # icat-plus's own address, as deployed by icat-docker-compose.yml on this
+  # same target.
+  ws_root: "http://localhost:{{ icat_config.icat_plus_port }}"

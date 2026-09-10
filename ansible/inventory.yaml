@@ -16,14 +16,14 @@ mxcube_vms:
     #   ansible_connection: local
     #   ansible_python_interpreter: /usr/bin/python3
     #   vm_context: "mxcube_local"
-    #   use_bliss: true    # real BLISS-backed hardware config (demo.bliss.yaml)
+    #   use_bliss: true    # applies bliss.overlay/ for real BLISS-backed hardware
 
     # --- Option B: deploy on a remote VM/server ---
     mxcube_vm1:
       ansible_host: mxcube-test-1
       ansible_python_interpreter: /usr/bin/python3
       vm_context: "mxcube_vm1"
-      use_bliss: false    # no BLISS on this VM — mockup hardware config (demo.mockup.yaml)
+      use_bliss: false    # no BLISS on this VM — standalone mockup hardware config
 
   vars:
     ansible_python_interpreter: /usr/bin/python3

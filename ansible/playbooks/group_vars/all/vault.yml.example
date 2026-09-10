@@ -8,3 +8,16 @@ vault_mxcube_security_password_salt: "CHANGEME"
 
 # SSO client secret (leave empty if use_sso: false)
 vault_mxcube_sso_client_secret: ""
+
+# ESRF registry credentials for pulling ICAT images (leave empty if
+# use_icat: false — if use_icat is true and these are empty, the playbook
+# prompts for them interactively instead). GitLab and Harbor are separate
+# systems with separate credentials.
+vault_icat_gitlab_registry_user: ""
+vault_icat_gitlab_registry_password: ""
+
+# Harbor: if your account uses SSO, this is the CLI secret from Harbor's
+# web UI (your username -> User Profile -> CLI secret), NOT your regular
+# login password — that will fail with a 401 on docker login.
+vault_icat_harbor_registry_user: ""
+vault_icat_harbor_registry_password: ""

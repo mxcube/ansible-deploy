@@ -75,12 +75,16 @@
       changed_when: true
       tags: [conda, setup]
 
+    # Runs on every deploy, not just a fresh install: if miniconda was
+    # already installed under a different service_user (or from before
+    # become was fixed to actually run as service_user), mamba/conda refuse
+    # to write to caches/env metadata they don't own — same class of issue
+    # as the git repo ownership fix above.
     - name: Set ownership of miniconda directory
       ansible.builtin.file:
         path: "{{ install_base_path }}/miniconda"
         owner: "{{ service_user }}"
         recurse: true
-      when: not conda_installed.stat.exists
       tags: [conda, setup]
 
     - name: Initialize conda for bash
@@ -171,9 +175,9 @@
       when: use_bliss | default(false)
       tags: [git, repositories, bliss, update]
 
-    # Hardware config (demo.bliss.yaml/ or demo.mockup.yaml/, per use_bliss) —
-    # deployed after the clone so our simulator config replaces the generic
-    # default that ships inside the mxcubeweb repo (always named "demo.yaml"
+    # Hardware config (demo.yaml/, optionally overlaid per use_bliss/use_icat
+    # below) — deployed after the clone so our simulator config replaces the
+    # generic default that ships inside the mxcubeweb repo (also named "demo.yaml"
     # there, regardless of which variant we're about to deploy).
     - name: Remove default hardware-object config shipped with mxcubeweb
       ansible.builtin.file:
@@ -197,6 +201,43 @@
         owner: "{{ service_user }}"
         mode: preserve
       tags: [config, hardware-object]
+
+    # BLISS overlay — demo.yaml/ is the standalone mockup config by default;
+    # when use_bliss is true, this replaces only the files that actually
+    # differ for real BLISS hardware (motors/shutters/nstate objects,
+    # bliss_proxy, session), same overlay pattern as lims-icat.overlay/
+    # below. bliss_proxy.yaml/lims.yaml themselves already exist in
+    # demo.yaml/ either way — only beamline.yaml's references to them change.
+    - name: Apply BLISS hardware-object overlay
+      ansible.builtin.copy:
+        src: "../../bliss.overlay/"
+        dest: "{{ install_base_path }}/mxcubeweb/{{ mxcube_config_dir }}/"
+        owner: "{{ service_user }}"
+        mode: preserve
+      when: use_bliss | default(false)
+      tags: [config, hardware-object, bliss]
+
+    # ICAT LIMS overlay — applied on top of demo.yaml/ (and the BLISS
+    # overlay above, if any), replacing only the files that actually differ
+    # for real ICAT instead of the ISPyB mockup: the lims: line in
+    # beamline.yaml, and the new lims-icat.yaml hardware object itself.
+    - name: Point beamline.yaml's lims object at ICAT
+      ansible.builtin.lineinfile:
+        path: "{{ install_base_path }}/mxcubeweb/{{ mxcube_config_dir }}/beamline.yaml"
+        regexp: '^(\s*-\s*lims:\s*).*$'
+        line: '\1lims-icat.yaml'
+        backrefs: true
+      when: use_icat | default(false)
+      tags: [config, hardware-object, icat]
+
+    - name: Deploy ICAT LIMS hardware-object config
+      ansible.builtin.template:
+        src: "../../lims-icat.overlay/lims-icat.yaml"
+        dest: "{{ install_base_path }}/mxcubeweb/{{ mxcube_config_dir }}/lims-icat.yaml"
+        owner: "{{ service_user }}"
+        mode: '0644'
+      when: use_icat | default(false)
+      tags: [config, hardware-object, icat]
 
     # Server configuration (server.yaml) — deployed after repo sync/clone so it
     # overwrites the default file that comes with the repository.
@@ -406,6 +447,10 @@
         # on PATH, `env` can't find node even though we call pnpm itself
         # by absolute path.
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
+        # Without this, pnpm refuses to purge/reinstall a stale
+        # node_modules (e.g. after a lockfile change) because it wants an
+        # interactive confirmation it can never get from Ansible.
+        CI: "true"
       become_user: "{{ service_user }}"
       become: true
       changed_when: false
@@ -519,6 +564,134 @@
       when: use_docker | default(false)
       tags: [docker]
 
+    # ICAT stack (opt-in, use_icat) — separate compose project from the
+    # hardware simulators above. Registry credentials come from vault.yml
+    # if set there, otherwise prompted for interactively below. GitLab and
+    # Harbor are separate auth systems with separate credentials — do NOT
+    # assume the same username/password works for both. In particular,
+    # Harbor with SSO typically rejects your regular login password for
+    # `docker login`/registry API auth; it wants the CLI secret from your
+    # Harbor profile page instead.
+    - name: Prompt for ESRF GitLab registry username (not set in vault.yml)
+      ansible.builtin.pause:
+        prompt: "ESRF GitLab registry username for ICAT images (gitlab-registry.esrf.fr)"
+      register: icat_gitlab_registry_user_prompt
+      when: (use_icat | default(false)) and (icat_gitlab_registry_user | length == 0)
+      tags: [icat]
+
+    - name: Prompt for ESRF GitLab registry password/token (not set in vault.yml)
+      ansible.builtin.pause:
+        prompt: "ESRF GitLab registry password or personal access token (input hidden)"
+        echo: false
+      register: icat_gitlab_registry_password_prompt
+      when: (use_icat | default(false)) and (icat_gitlab_registry_password | length == 0)
+      no_log: true
+      tags: [icat]
+
+    - name: Prompt for ESRF Harbor registry username (not set in vault.yml)
+      ansible.builtin.pause:
+        prompt: "ESRF Harbor registry username for ICAT images (harbor.esrf.fr)"
+      register: icat_harbor_registry_user_prompt
+      when: (use_icat | default(false)) and (icat_harbor_registry_user | length == 0)
+      tags: [icat]
+
+    - name: Prompt for ESRF Harbor registry CLI secret (not set in vault.yml)
+      ansible.builtin.pause:
+        prompt: "ESRF Harbor CLI secret (Harbor UI -> your username -> User Profile -> CLI secret; NOT your login password, input hidden)"
+        echo: false
+      register: icat_harbor_registry_password_prompt
+      when: (use_icat | default(false)) and (icat_harbor_registry_password | length == 0)
+      no_log: true
+      tags: [icat]
+
+    - name: Store ESRF registry credentials
+      ansible.builtin.set_fact:
+        icat_gitlab_registry_user: "{{ icat_gitlab_registry_user_prompt.user_input | default(icat_gitlab_registry_user) }}"
+        icat_gitlab_registry_password: "{{ icat_gitlab_registry_password_prompt.user_input | default(icat_gitlab_registry_password) }}"
+        icat_harbor_registry_user: "{{ icat_harbor_registry_user_prompt.user_input | default(icat_harbor_registry_user) }}"
+        icat_harbor_registry_password: "{{ icat_harbor_registry_password_prompt.user_input | default(icat_harbor_registry_password) }}"
+      when: use_icat | default(false)
+      no_log: true
+      tags: [icat]
+
+    - name: Log in to ESRF GitLab registry (ICAT images)
+      community.docker.docker_login:
+        registry_url: gitlab-registry.esrf.fr
+        username: "{{ icat_gitlab_registry_user }}"
+        password: "{{ icat_gitlab_registry_password }}"
+      when: use_icat | default(false)
+      no_log: true
+      tags: [icat]
+
+    - name: Log in to ESRF Harbor registry (ICAT images)
+      community.docker.docker_login:
+        registry_url: harbor.esrf.fr
+        username: "{{ icat_harbor_registry_user }}"
+        password: "{{ icat_harbor_registry_password }}"
+      when: use_icat | default(false)
+      no_log: true
+      tags: [icat]
+
+    - name: Create directory for ICAT docker-compose project
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/icat-compose/db-init"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0755'
+      when: use_icat | default(false)
+      tags: [icat]
+
+    - name: Deploy ICAT docker-compose file
+      ansible.builtin.copy:
+        src: "../icat-docker-compose.yml"
+        dest: "{{ install_base_path }}/icat-compose/docker-compose.yml"
+        owner: "{{ service_user }}"
+        mode: '0644'
+      when: use_icat | default(false)
+      tags: [icat]
+
+    - name: Render ICAT stack .env file
+      ansible.builtin.template:
+        src: templates/icat.env.j2
+        dest: "{{ install_base_path }}/icat-compose/.env"
+        owner: "{{ service_user }}"
+        mode: '0600'
+      when: use_icat | default(false)
+      tags: [icat]
+
+    - name: Fetch ICAT seed database (small test fixture from upstream repo)
+      ansible.builtin.get_url:
+        url: "{{ icat_config.seed_sql_url }}"
+        dest: "{{ install_base_path }}/icat-compose/db-init/small-test-db.sql"
+        owner: "{{ service_user }}"
+        mode: '0644'
+        force: false
+      when: use_icat | default(false)
+      tags: [icat]
+
+    - name: Remove any stale ICAT containers with conflicting names
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+        force_kill: true
+      loop:
+        - icat-plus
+        - "icat-{{ icat_config.icat_version }}"
+        - auth-db
+        - database
+        - mongodb
+        - activemq
+      when: use_icat | default(false)
+      tags: [icat]
+
+    - name: Start ICAT containers with docker-compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ install_base_path }}/icat-compose"
+        state: present
+      become: true
+      when: use_icat | default(false)
+      tags: [icat]
+
     # Systemd service
     - name: Create systemd service file
       ansible.builtin.template:
@@ -542,11 +715,11 @@
       when: use_bliss | default(false)
       tags: [service, systemd, bliss]
 
-    - name: Enable and start MXCubeWeb service
+    - name: Enable and restart MXCubeWeb service
       ansible.builtin.systemd:
         name: "mxcubeweb-{{ vm_context }}"
         enabled: true
-        state: started
+        state: restarted
         daemon_reload: true
       tags: [service, systemd]
 
