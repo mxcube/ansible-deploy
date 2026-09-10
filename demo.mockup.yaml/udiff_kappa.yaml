@@ -1,0 +1,7 @@
+%YAML 1.2
+---
+class: ExporterMotor.ExporterMotor
+configuration:
+  exporter_address: localhost:9002
+  actuator_name: Kappa
+  username: Kappa

@@ -2,23 +2,25 @@
 # Global variables for MXCubeWeb deployment
 
 # User that runs the services on the target VM
-service_user: "{{ lookup('env', 'USER') }}"
+service_user: "mxop" #"{{ lookup('env', 'USER') }}"
 service_group: ""
 
 install_base_path: "/opt/mxcube"
 log_base_path: "/var/log/mxcube"
 
-# Subdirectory inside mxcubeweb that holds the hardware YAML configs
-mxcube_config_dir: "demo.yaml"
+# Subdirectory inside mxcubeweb that holds the hardware YAML configs.
+# Automatically follows use_bliss (defined below): demo.bliss.yaml wires up
+# the real BLISS-backed hardware objects, demo.mockup.yaml swaps every one
+# of those for its *Mockup equivalent so the beamline can run standalone,
+# without BLISS. Override explicitly here only if you need to decouple the
+# two (e.g. testing one config with the other's use_bliss setting).
+mxcube_config_dir: "{{ 'demo.bliss.yaml' if use_bliss else 'demo.mockup.yaml' }}"
 
 # Python version used by the mxcubeweb conda environment
 mxcube_python_version: "3.11"
 
 # Log level passed to mxcubeweb-server (-L flag)
 mxcube_log_level: "info"
-
-# Subdirectory inside mxcubeweb that holds the docker-compose file
-docker_compose_project_dir: "ansible"
 
 mxcubeweb_config:
   port: 8081
@@ -28,7 +30,7 @@ mxcubeweb_config:
   secret_key: "{{ vault_mxcube_secret_key }}"
   security_password_salt: "{{ vault_mxcube_security_password_salt }}"
 
-  user_db_path: "/tmp/mxcube-user.db"
+  user_db_path: "{{ install_base_path }}/data/mxcube-user.db"
   permanent_session_lifetime: 60
 
   cert: "NONE"
@@ -39,13 +41,17 @@ mxcubeweb_config:
 
   external_url: "https://your-mxcube-host.example.com"
   allowed_cors_origins:
-    - "https://your-mxcube-host.example.com"
+    - "http://localhost:8081"
+    - "http://{{ ansible_host | default(inventory_hostname) }}:8081"
+    - "http://{{ ansible_host | default(inventory_hostname) }}:8000"
 
 # Users allowed to log in — role is either "user" or "staff"
 # mxcubeweb_users:
 #   - username: "localuser"
 #     role: "staff"
-mxcubeweb_users: []
+mxcubeweb_users:
+  - username: "localuser"
+    role: "staff"
 
 mxcubeweb_sso:
   use_sso: false
@@ -60,11 +66,10 @@ mxcubeweb_sso:
 
 # Video stream configuration
 mxcubeweb_video:
-  use_external_streamer: false
   format: "MPEG1"
-  stream_url: ""
+  stream_url: "ws://{{ ansible_host | default(inventory_hostname) }}:8000/ws"
   stream_port: 8000
-  mxcube_starts_stream: false
+  mxcube_starts_stream: true
 
 # Argus integration (optional live view proxy)
 mxcubeweb_argus:
@@ -92,28 +97,7 @@ conda_environments:
       - aiohttp
       - pyicat_plus
 
-# Set use_local_repos to true to sync from local paths instead of cloning from GitHub
-use_local_repos: true
-
-local_mxcubecore_path: "../../../mxcubecore"
-local_mxcubeweb_path: "../../../"
-local_bliss_path: "../../../bliss"
-
-# Only relevant when deploying locally (ansible_connection: local) with
-# use_local_repos: true. When set to true, the playbook skips the rsync copy
-# of local_mxcubecore_path/local_mxcubeweb_path and operates directly on your
-# working checkouts instead — no separate install copy, editable installs
-# point straight at your source tree.
-#
-# Requires install_base_path to be the parent directory that contains both
-# checkouts as siblings named exactly "mxcubecore" and "mxcubeweb" (e.g. if
-# your checkouts are ~/mxcube/mxcubecore and ~/mxcube/mxcubeweb, set
-# install_base_path: "~/mxcube"). Be aware this also means server.yaml gets
-# templated straight into your mxcubeweb working tree — it will show up as a
-# modified/dirty file after each deploy.
-use_local_repos_in_place: true
-
-# GitHub repositories (used when use_local_repos is false)
+# GitHub repositories — cloned fresh onto the target on every deploy
 mxcubecore_repo: "https://github.com/mxcube/mxcubecore.git"
 mxcubecore_version: "develop"
 
@@ -121,9 +105,10 @@ mxcubeweb_repo: "https://github.com/mxcube/mxcubeweb.git"
 mxcubeweb_version: "develop"
 
 # BLISS is ESRF's in-house control system, hosted on a private GitLab.
-# Leave disabled unless you have access to gitlab.esrf.fr, or set
-# use_local_repos: true with your own local_bliss_path.
-use_bliss: false
+# Fallback default if a host doesn't set its own use_bliss in inventory.yaml
+# — set it per-host there instead when different targets need different
+# values (e.g. one host with real BLISS access, another running standalone).
+use_bliss: true
 bliss_repo: "https://gitlab.esrf.fr/bliss/bliss.git"
 bliss_version: "master"
 bliss_rest_port: 5000

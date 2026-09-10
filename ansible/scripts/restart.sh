@@ -15,7 +15,7 @@ PLAYBOOK="${PROJECT_ROOT}/playbooks/restart.yml"
 INVENTORY="${PROJECT_ROOT}/inventory.yaml"
 
 if ! command -v ansible-playbook >/dev/null 2>&1; then
-    echo "ansible-playbook not found. Please install Ansible (./scripts/install_ansible.sh)"
+    echo "ansible-playbook not found. Please install Ansible (e.g. 'python3 -m pip install --user ansible')"
     exit 2
 fi
 

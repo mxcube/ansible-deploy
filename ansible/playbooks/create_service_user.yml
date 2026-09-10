@@ -1,0 +1,36 @@
+---
+# Standalone playbook to create the system user that runs the MXCubeWeb
+# services on the target(s). Run this once, before the first deploy, if you
+# want the services to run as a dedicated account rather than the user you
+# SSH in as:
+#
+#   ansible-playbook -i inventory.yaml playbooks/create_service_user.yml
+#
+# After this, set `service_user: mxop` in
+# playbooks/group_vars/all/vars.yml (it defaults to your SSH user) so
+# deploy_vm.yml actually installs/runs everything as this account.
+
+- name: Create MXCubeWeb service user
+  hosts: mxcube_vms
+  become: true
+
+  vars:
+    new_service_user: mxop
+
+  tasks:
+    - name: Create service user "{{ new_service_user }}"
+      ansible.builtin.user:
+        name: "{{ new_service_user }}"
+        shell: /bin/bash
+        create_home: true
+        state: present
+
+    - name: Show created user information
+      ansible.builtin.command:
+        cmd: "id {{ new_service_user }}"
+      register: user_info
+      changed_when: false
+
+    - name: Display result
+      ansible.builtin.debug:
+        msg: "{{ user_info.stdout }}"

@@ -18,6 +18,7 @@
           - graphviz
           - redis-server
           - tmux
+          - acl
         state: present
       when: ansible_facts['os_family'] == "Debian"
       tags: [system, dependencies]
@@ -37,7 +38,20 @@
         state: directory
         owner: "{{ service_user }}"
         mode: '0750'
+        recurse: true
       tags: [setup, directories, logging]
+
+    # user_db_path lives here rather than /tmp so it survives reboots and is
+    # guaranteed writable by service_user, instead of relying on /tmp's loose
+    # world-writable permissions.
+    - name: Create data directory for mxcubeweb's user database
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/data"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0750'
+        recurse: true
+      tags: [setup, directories]
 
     # Miniconda setup
     - name: Check if Miniconda is installed
@@ -90,7 +104,7 @@
         - "https://repo.anaconda.com/pkgs/main"
         - "https://repo.anaconda.com/pkgs/r"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       tags: [conda, mamba, setup]
 
@@ -100,58 +114,35 @@
       environment:
         CONDA_SOLVER: classic
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       when: not mamba_installed.stat.exists
       changed_when: true
       async: 3600
       poll: 30
       tags: [conda, mamba, bliss]
 
-    # Copy or clone repositories depending on use_local_repos flag
-    - name: Copy local mxcubecore repository
-      ansible.posix.synchronize:
-        src: "{{ local_mxcubecore_path }}/"
-        dest: "{{ install_base_path }}/mxcubecore"
-        delete: false
-        recursive: true
-        rsync_opts:
-          - "--exclude=.git"
-          - "--exclude=__pycache__"
-          - "--exclude=*.pyc"
-      become_user: "{{ service_user }}"
-      when: use_local_repos and not (use_local_repos_in_place | default(false))
-      tags: [repositories, mxcubecore, local, update]
+    # Ensure ownership before cloning: if these directories already exist
+    # from a previous deploy under a different service_user (or from before
+    # become was fixed to actually run as service_user), git refuses to
+    # operate on them at all ("detected dubious ownership") rather than
+    # silently misbehaving. Re-owning here makes every deploy self-healing
+    # regardless of what ran before it, without discarding existing git
+    # history/objects (bliss in particular is a large repo not worth a full
+    # re-clone on every run).
+    - name: Ensure repository directories are owned by service_user
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/{{ item }}"
+        state: directory
+        owner: "{{ service_user }}"
+        recurse: true
+      loop:
+        - mxcubecore
+        - mxcubeweb
+        - bliss
+      when: item != 'bliss' or use_bliss | default(false)
+      tags: [git, repositories, update]
 
-    - name: Copy local mxcubeweb repository
-      ansible.posix.synchronize:
-        src: "{{ local_mxcubeweb_path }}/"
-        dest: "{{ install_base_path }}/mxcubeweb"
-        delete: false
-        recursive: true
-        rsync_opts:
-          - "--exclude=.git"
-          - "--exclude=__pycache__"
-          - "--exclude=*.pyc"
-          - "--exclude=node_modules"
-          - "--exclude=ui/build"
-      become_user: "{{ service_user }}"
-      when: use_local_repos and not (use_local_repos_in_place | default(false))
-      tags: [repositories, mxcubeweb, local, update]
-
-    - name: Copy local bliss repository
-      ansible.posix.synchronize:
-        src: "{{ local_bliss_path }}/"
-        dest: "{{ install_base_path }}/bliss"
-        delete: false
-        recursive: true
-        rsync_opts:
-          - "--exclude=.git"
-          - "--exclude=__pycache__"
-          - "--exclude=*.pyc"
-      become_user: "{{ service_user }}"
-      when: use_local_repos and (use_bliss | default(false)) and not (use_local_repos_in_place | default(false))
-      tags: [repositories, bliss, local, update]
-
+    # Clone repositories fresh on the target
     - name: Clone mxcubecore from GitHub
       ansible.builtin.git:
         repo: "{{ mxcubecore_repo }}"
@@ -159,7 +150,6 @@
         version: "{{ mxcubecore_version }}"
         force: true
       become_user: "{{ service_user }}"
-      when: not use_local_repos
       tags: [git, repositories, mxcubecore, update]
 
     - name: Clone mxcubeweb from GitHub
@@ -169,7 +159,6 @@
         version: "{{ mxcubeweb_version }}"
         force: true
       become_user: "{{ service_user }}"
-      when: not use_local_repos
       tags: [git, repositories, mxcubeweb, update]
 
     - name: Clone bliss from GitLab
@@ -179,8 +168,35 @@
         version: "{{ bliss_version }}"
         force: true
       become_user: "{{ service_user }}"
-      when: not use_local_repos and (use_bliss | default(false))
+      when: use_bliss | default(false)
       tags: [git, repositories, bliss, update]
+
+    # Hardware config (demo.bliss.yaml/ or demo.mockup.yaml/, per use_bliss) —
+    # deployed after the clone so our simulator config replaces the generic
+    # default that ships inside the mxcubeweb repo (always named "demo.yaml"
+    # there, regardless of which variant we're about to deploy).
+    - name: Remove default hardware-object config shipped with mxcubeweb
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/mxcubeweb/demo.yaml"
+        state: absent
+      tags: [config, hardware-object]
+
+    # Also clear our own previously-deployed config dir first, in case a
+    # prior deploy used the other use_bliss variant, or left behind files
+    # that are no longer part of this variant.
+    - name: Remove previously-deployed hardware-object config
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/mxcubeweb/{{ mxcube_config_dir }}"
+        state: absent
+      tags: [config, hardware-object]
+
+    - name: Deploy simulator hardware-object config
+      ansible.builtin.copy:
+        src: "../../{{ mxcube_config_dir }}/"
+        dest: "{{ install_base_path }}/mxcubeweb/{{ mxcube_config_dir }}/"
+        owner: "{{ service_user }}"
+        mode: preserve
+      tags: [config, hardware-object]
 
     # Server configuration (server.yaml) — deployed after repo sync/clone so it
     # overwrites the default file that comes with the repository.
@@ -237,7 +253,7 @@
       ansible.builtin.command:
         cmd: "{{ install_base_path }}/miniconda/bin/mamba clean -a -y"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       when: not mxcubeweb_env.stat.exists
       tags: [conda, environment]
@@ -246,7 +262,7 @@
       ansible.builtin.command:
         cmd: "{{ install_base_path }}/miniconda/bin/mamba env create --file {{ install_base_path }}/mxcubeweb/conda-environment.yml"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: true
       when: not mxcubeweb_env.stat.exists
       async: 1800
@@ -257,7 +273,7 @@
       ansible.builtin.command:
         cmd: "{{ install_base_path }}/miniconda/bin/mamba env update -n mxcubeweb --file {{ install_base_path }}/mxcubeweb/conda-environment.yml --prune"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: true
       when: mxcubeweb_env.stat.exists and not (skip_env_update | default(false) | bool)
       async: 1800
@@ -275,7 +291,7 @@
       ansible.builtin.command:
         cmd: "{{ install_base_path }}/miniconda/bin/mamba clean -a -y"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       when: (use_bliss | default(false)) and not bliss_dev_env.stat.exists
       tags: [conda, environment, bliss, cache]
@@ -292,7 +308,7 @@
       environment:
         TMPDIR: /tmp
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: true
       when: (use_bliss | default(false)) and not bliss_dev_env.stat.exists
       async: 1800
@@ -310,7 +326,7 @@
         chdir: "{{ install_base_path }}/bliss"
         executable: /bin/bash
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       when: use_bliss | default(false)
       tags: [conda, environment, bliss, update]
@@ -321,20 +337,13 @@
       changed_when: false
       tags: [python, dependencies, mxcubeweb, update]
 
-    - name: Remove stale virtualenv xonsh activation scripts
-      ansible.builtin.file:
-        path: "{{ install_base_path }}/miniconda/envs/mxcubeweb/lib/python{{ mxcube_python_version }}/site-packages/virtualenv/activation/xonsh"
-        state: absent
-      tags: [python, dependencies, mxcubeweb, update]
-
-
     - name: Fix attrs in mxcubeweb env (required by pip/poetry)
       ansible.builtin.command:
         cmd: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin/pip install --force-reinstall 'attrs>=22.1.0'"
       environment:
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       tags: [python, dependencies, mxcubeweb, update]
 
@@ -346,7 +355,7 @@
       environment:
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       failed_when: false
       tags: [python, dependencies, mxcubeweb, update]
@@ -360,7 +369,7 @@
         POETRY_VIRTUALENVS_CREATE: "false"
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       tags: [python, dependencies, mxcubeweb, update]
 
@@ -372,7 +381,7 @@
       environment:
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       tags: [python, dependencies, mxcubecore, update]
 
@@ -382,7 +391,7 @@
       environment:
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       tags: [python, dependencies, mxcubeweb, update]
 
@@ -398,7 +407,7 @@
         # by absolute path.
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       changed_when: false
       async: 1800
       poll: 30
@@ -412,7 +421,7 @@
       environment:
         PATH: "{{ install_base_path }}/miniconda/envs/mxcubeweb/bin:{{ ansible_facts['env'].PATH }}"
       become_user: "{{ service_user }}"
-      become: false
+      become: true
       async: 1800
       poll: 30
       tags: [ui, build, frontend, update]
@@ -470,9 +479,41 @@
       when: use_docker | default(false)
       tags: [docker, setup]
 
+    - name: Create directory for docker-compose project
+      ansible.builtin.file:
+        path: "{{ install_base_path }}/docker-compose"
+        state: directory
+        owner: "{{ service_user }}"
+        mode: '0755'
+      when: use_docker | default(false)
+      tags: [docker, setup]
+
+    - name: Deploy docker-compose file for hardware simulators
+      ansible.builtin.copy:
+        src: "../docker-compose.yml"
+        dest: "{{ install_base_path }}/docker-compose/docker-compose.yml"
+        owner: "{{ service_user }}"
+        mode: '0644'
+      when: use_docker | default(false)
+      tags: [docker, setup]
+
+    # Remove any stale containers holding these fixed names (e.g. left over
+    # from a manual run, or a prior deploy from a different project_src) so
+    # docker-compose doesn't hit a name conflict trying to recreate them.
+    - name: Remove any stale simulator containers with conflicting names
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+        force_kill: true
+      loop:
+        - flex-server
+        - arinax-md
+      when: use_docker | default(false)
+      tags: [docker, setup]
+
     - name: Start Docker containers with docker-compose
       community.docker.docker_compose_v2:
-        project_src: "{{ install_base_path }}/mxcubeweb/{{ docker_compose_project_dir }}"
+        project_src: "{{ install_base_path }}/docker-compose"
         state: present
       become: true
       when: use_docker | default(false)

@@ -5,9 +5,9 @@
 # you want, comment out / delete the other):
 #
 #   - "localhost"   deploys on this same machine, no SSH involved at all.
-#   - "mxcube_vm1"  deploys on a remote VM/server over SSH — run
-#                   ./scripts/setup_ssh.sh once first to set up key-based
-#                   access and passwordless sudo.
+#   - "mxcube_vm1"  deploys on a remote VM/server over SSH — requires
+#                   working SSH access to the target, set up independently
+#                   of this playbook.
 
 mxcube_vms:
   hosts:
@@ -16,12 +16,14 @@ mxcube_vms:
     #   ansible_connection: local
     #   ansible_python_interpreter: /usr/bin/python3
     #   vm_context: "mxcube_local"
+    #   use_bliss: true    # real BLISS-backed hardware config (demo.bliss.yaml)
 
     # --- Option B: deploy on a remote VM/server ---
     mxcube_vm1:
-      ansible_host: YOUR_VM_HOSTNAME_OR_IP
+      ansible_host: mxcube-test-1
       ansible_python_interpreter: /usr/bin/python3
       vm_context: "mxcube_vm1"
+      use_bliss: false    # no BLISS on this VM — mockup hardware config (demo.mockup.yaml)
 
   vars:
     ansible_python_interpreter: /usr/bin/python3

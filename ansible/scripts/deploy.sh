@@ -17,7 +17,13 @@ PROJECT_ROOT="$(realpath "${SCRIPT_ROOT}/../")"
 echo "=== Running MXCubeWeb deploy playbook ==="
 
 if ! command -v ansible-playbook >/dev/null 2>&1; then
-    echo "ansible-playbook not found. Please install Ansible (./scripts/install_ansible.sh)"
+    echo "ansible-playbook not found. Please install Ansible (e.g. 'python3 -m pip install --user ansible')"
+    exit 2
+fi
+
+if ! ansible-galaxy collection list 2>/dev/null | grep -q '^community\.docker '; then
+    echo "Required Ansible collection 'community.docker' not found. Install it with:"
+    echo "  ansible-galaxy collection install -r ${SCRIPT_ROOT}/../requirements.yml"
     exit 2
 fi
 
@@ -29,9 +35,12 @@ if [ ! -f "${PLAYBOOK}" ]; then
     exit 1
 fi
 
-# Check that required secret environment variables are set
+# Check that required secret environment variables are set.
+# MXCUBE_SSO_CLIENT_SECRET is intentionally not required here — it's only
+# needed when SSO is enabled (use_sso: true in vars.yml), and is documented
+# everywhere else (vault.yml.example, README) as fine to leave empty otherwise.
 MISSING_VARS=()
-for var in MXCUBE_SECRET_KEY MXCUBE_SECURITY_PASSWORD_SALT MXCUBE_SSO_CLIENT_SECRET; do
+for var in MXCUBE_SECRET_KEY MXCUBE_SECURITY_PASSWORD_SALT; do
     if [ -z "${!var}" ]; then
         MISSING_VARS+=("$var")
     fi
@@ -46,10 +55,13 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
     echo "Set them before running this script, e.g. in ~/.mxcube_secrets (never commit that file):"
     echo "  export MXCUBE_SECRET_KEY=\$(python -c 'import secrets; print(secrets.token_hex())')"
     echo "  export MXCUBE_SECURITY_PASSWORD_SALT=\$(python -c 'import secrets; print(secrets.token_hex())')"
-    echo "  export MXCUBE_SSO_CLIENT_SECRET=<value>"
+    echo "  export MXCUBE_SSO_CLIENT_SECRET=<value>   # leave empty if SSO is disabled"
     echo "  source ~/.mxcube_secrets"
     echo ""
     exit 1
+fi
+if [ -z "${MXCUBE_SSO_CLIENT_SECRET}" ]; then
+    echo "NOTE: MXCUBE_SSO_CLIENT_SECRET is empty — fine if use_sso: false in vars.yml, required otherwise."
 fi
 
 # Parse --quick flag; pass everything else through to ansible-playbook

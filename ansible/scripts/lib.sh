@@ -26,7 +26,7 @@ resolve_target() {
     fi
 
     if ! command -v ansible >/dev/null 2>&1; then
-        echo "ansible is required by these scripts but was not found on PATH. Run './scripts/install_ansible.sh' and retry." >&2
+        echo "ansible is required by these scripts but was not found on PATH. Install it (e.g. 'python3 -m pip install --user ansible') and retry." >&2
         return 1
     fi
 

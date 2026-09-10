@@ -1,9 +1,8 @@
 #!/bin/bash
 
 # Script to deploy and start MXCubeWeb.
-# On a remote target, also offers to open an SSH tunnel. On a local target
-# (ansible_connection: local in inventory.yaml), MXCubeWeb is reached
-# directly on localhost — no tunnel involved.
+# Assumes access to the target (SSH tunnel, VPN, direct network, etc.) is
+# already set up independently of this script if needed.
 
 set -e
 
@@ -32,9 +31,7 @@ else
     PROTOCOL="https"
 fi
 REMOTE_PORT=8081
-LOCAL_PORT=8081
 BLISS_REMOTE_PORT=5000
-BLISS_LOCAL_PORT=5000
 
 echo "=== MXCubeWeb Deployment and Start ==="
 echo ""
@@ -123,57 +120,12 @@ else
     echo "Video streamer not detected on port 8000 — skipping (optional)."
 fi
 
-if is_local_target; then
-    # Deployed on this machine — reached directly, no tunnel needed.
-    echo ""
-    echo "MXCubeWeb URL: ${PROTOCOL}://localhost:${REMOTE_PORT}"
-    if [ "${USE_BLISS}" = "true" ]; then
-        echo "Bliss API URL: http://localhost:${BLISS_REMOTE_PORT}/api/info"
-    fi
-    if [ "${VIDEO_STREAMER_UP}" = true ]; then
-        echo "Video Streamer: http://localhost:8000"
-    fi
-    echo ""
-    exit 0
-fi
-
-# Ask if user wants to create SSH tunnel
 echo ""
-read -p "Do you want to create SSH tunnel? (y/n) " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    # Kill existing tunnels
-    echo "Cleaning up existing SSH tunnels..."
-    pkill -f "ssh.*-L.*${LOCAL_PORT}:localhost:${REMOTE_PORT}" 2>/dev/null || true
-    sleep 1
-
-    # Create SSH tunnel
-
-    TUNNEL_ARGS=(-N -L ${LOCAL_PORT}:localhost:${REMOTE_PORT})
-    [ -n "${TARGET_PORT}" ] && TUNNEL_ARGS+=(-p "${TARGET_PORT}")
-
-    echo ""
-    echo "Creating SSH tunnels..."
-    echo "MXCubeWeb      - Local port: ${LOCAL_PORT}"
-    if [ "${USE_BLISS}" = "true" ]; then
-        echo "Bliss REST API - Local port: ${BLISS_LOCAL_PORT}"
-        TUNNEL_ARGS+=(-L ${BLISS_LOCAL_PORT}:localhost:${BLISS_REMOTE_PORT})
-    fi
-    if [ "${VIDEO_STREAMER_UP}" = true ]; then
-        echo "Video Streamer - Local port: 8000"
-        TUNNEL_ARGS+=(-L 8000:localhost:8000)
-    fi
-    echo "MXCubeWeb URL: ${PROTOCOL}://${TARGET_DISPLAY}:${REMOTE_PORT}"
-    if [ "${USE_BLISS}" = "true" ]; then
-        echo "Bliss API URL: http://localhost:${BLISS_LOCAL_PORT}/api/info"
-    fi
-    echo ""
-    echo "Use scripts/stop.sh to stop the tunnels and close the application"
-    echo ""
-
-    ssh "${TUNNEL_ARGS[@]}" "${TARGET_USER:+${TARGET_USER}@}${TARGET_SSH_HOST}"
-else
-    echo ""
-    echo "No SSH tunnel created."
-    echo ""
+echo "MXCubeWeb URL: ${PROTOCOL}://${TARGET_DISPLAY}:${REMOTE_PORT}"
+if [ "${USE_BLISS}" = "true" ]; then
+    echo "Bliss API URL: http://${TARGET_DISPLAY}:${BLISS_REMOTE_PORT}/api/info"
 fi
+if [ "${VIDEO_STREAMER_UP}" = true ]; then
+    echo "Video Streamer: http://${TARGET_DISPLAY}:8000"
+fi
+echo ""

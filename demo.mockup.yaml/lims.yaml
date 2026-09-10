@@ -1,0 +1,6 @@
+%YAML 1.2
+---
+class: ESRFLIMS.ESRFLIMS
+objects:
+  drac: drac.yaml
+  ispyb: ispyb.yaml
